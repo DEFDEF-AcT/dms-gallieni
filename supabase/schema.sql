@@ -64,20 +64,24 @@ create table if not exists order_counters (
   last int not null default 0
 );
 
-create or replace function set_order_num() returns trigger as $$
+-- security definer : le trigger écrit dans order_counters en tant que propriétaire
+-- (contourne RLS) ; sinon « new row violates RLS policy for table order_counters ».
+create or replace function set_order_num() returns trigger
+  language plpgsql security definer set search_path = ''
+as $$
 declare
   y int := extract(year from now())::int;
   n int;
 begin
   if new.order_num is null then
-    insert into order_counters(year, last) values (y, 1)
-      on conflict (year) do update set last = order_counters.last + 1
+    insert into public.order_counters(year, last) values (y, 1)
+      on conflict (year) do update set last = public.order_counters.last + 1
       returning last into n;
     new.order_num := 'OR-' || y || '-' || lpad(n::text, 4, '0');
   end if;
   return new;
 end;
-$$ language plpgsql;
+$$;
 
 drop trigger if exists trg_order_num on orders;
 create trigger trg_order_num before insert on orders

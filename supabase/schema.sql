@@ -94,23 +94,31 @@ create trigger trg_orders_touch before update on orders
 
 -- 3. AUTH : profil créé automatiquement à l'inscription d'un compte -----------
 
-create or replace function handle_new_user() returns trigger as $$
+-- IMPORTANT : `set search_path = ''` est indispensable. Sans lui, le système
+-- d'auth Supabase exécute ce trigger avec un search_path restreint et `profiles`
+-- est introuvable → « Database error creating new user ». On qualifie donc les
+-- tables avec le schéma `public.`.
+create or replace function handle_new_user() returns trigger
+  language plpgsql security definer set search_path = ''
+as $$
 begin
-  insert into profiles(id, name, role)
+  insert into public.profiles(id, name, role)
   values (new.id, coalesce(new.raw_user_meta_data->>'name', new.email), 'enseignant')
   on conflict (id) do nothing;
   return new;
 end;
-$$ language plpgsql security definer;
+$$;
 
 drop trigger if exists trg_new_user on auth.users;
 create trigger trg_new_user after insert on auth.users
   for each row execute function handle_new_user();
 
 -- helper : l'utilisateur courant est-il admin ?
-create or replace function is_admin() returns boolean as $$
-  select exists(select 1 from profiles where id = auth.uid() and role = 'admin');
-$$ language sql security definer stable;
+create or replace function is_admin() returns boolean
+  language sql security definer stable set search_path = ''
+as $$
+  select exists(select 1 from public.profiles where id = auth.uid() and role = 'admin');
+$$;
 
 -- 4. RLS ---------------------------------------------------------------------
 

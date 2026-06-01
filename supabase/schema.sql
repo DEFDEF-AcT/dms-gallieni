@@ -143,19 +143,27 @@ as $$
   select exists(select 1 from public.profiles where id = auth.uid() and role in ('admin','enseignant'));
 $$;
 
+-- nom du profil de l'utilisateur courant (sert au filtrage des OR par élève affecté)
+create or replace function current_name() returns text
+  language sql security definer stable set search_path = ''
+as $$ select name from public.profiles where id = auth.uid(); $$;
+
 -- 4. RLS ---------------------------------------------------------------------
 
 alter table profiles enable row level security;
 alter table students enable row level security;
 alter table orders   enable row level security;
 
--- lecture : tout utilisateur connecté (= staff)
+-- lecture profils/élèves : tout utilisateur connecté
 drop policy if exists read_profiles on profiles;
 drop policy if exists read_students on students;
 drop policy if exists read_orders   on orders;
 create policy read_profiles on profiles for select using (auth.role() = 'authenticated');
 create policy read_students on students for select using (auth.role() = 'authenticated');
-create policy read_orders   on orders   for select using (auth.role() = 'authenticated');
+-- lecture des OR : le staff voit tout ; un élève ne voit QUE les OR où son nom
+-- figure dans les élèves affectés (assigned_students). Le `?` teste l'appartenance.
+create policy read_orders   on orders   for select
+  using ( is_staff() or assigned_students ? current_name() );
 
 -- création / modification : staff
 drop policy if exists ins_students on students;
@@ -166,7 +174,9 @@ create policy ins_students on students for insert with check (auth.role() = 'aut
 create policy upd_students on students for update using (auth.role() = 'authenticated');
 -- création d'OR : staff uniquement (les élèves ne peuvent pas créer d'ordre)
 create policy ins_orders   on orders   for insert with check (is_staff());
-create policy upd_orders   on orders   for update using (auth.role() = 'authenticated');
+-- modification : staff partout ; élève uniquement sur les OR où il est affecté
+create policy upd_orders   on orders   for update
+  using ( is_staff() or assigned_students ? current_name() );
 
 -- suppression + gestion des rôles : admin uniquement
 drop policy if exists del_students on students;

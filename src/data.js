@@ -72,13 +72,27 @@ export async function deleteOrder(id) {
 }
 
 // ── Élèves = profils role='eleve' (comptes « Étudiant Technicien ») ─────────
-// Lecture seule côté app : les comptes sont créés dans le dashboard Supabase.
 export async function listStudents() {
   const { data, error } = await supabase
-    .from("profiles").select("id,name,grp").eq("role", "eleve").order("name");
+    .from("profiles").select("id,name,grp,identifier").eq("role", "eleve").order("identifier");
   if (error) throw error;
-  return data.map((p) => ({ id: p.id, name: p.name, group: p.grp || "" }));
+  return data.map((p) => ({ id: p.id, name: p.name, group: p.grp || "", identifier: p.identifier || "" }));
 }
+
+// Gestion des comptes élèves via l'Edge Function « manage-students » (admin only).
+// Le jeton de l'utilisateur est joint automatiquement par supabase-js.
+async function callManageStudents(body) {
+  const { data, error } = await supabase.functions.invoke("manage-students", { body });
+  if (error) throw error;                       // réseau / 5xx
+  if (!data?.ok) throw new Error(data?.error || "Erreur inconnue");
+  return data;
+}
+// Crée un compte élève ; renvoie { identifier, id, name, grp }. L'identifiant est auto-généré.
+export const createStudent = ({ name, group, password }) =>
+  callManageStudents({ action: "create", name, grp: group, password });
+export const deleteStudentAccount = (id) => callManageStudents({ action: "delete", id });
+export const resetStudentPassword = (id, password) =>
+  callManageStudents({ action: "reset_password", id, password });
 
 // ── Staff = profils admin/enseignant (lecture seule) ───────────────────────
 export async function listStaff() {

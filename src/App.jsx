@@ -3,7 +3,13 @@ import { supabase } from "./supabase";
 import {
   listOrders, insertOrder, updateOrder as dbUpdateOrder, deleteOrder,
   listStudents, listStaff,
+  createStudent, deleteStudentAccount, resetStudentPassword,
 } from "./data";
+
+// Domaine interne des identifiants élèves (doit correspondre à l'Edge Function).
+const STUDENT_DOMAIN = "eleve.gallieni.local";
+// « Etudiant1 » → « etudiant1@eleve.gallieni.local » ; un email (avec @) est laissé tel quel.
+const toLoginEmail = (v) => v.includes("@") ? v.trim() : v.trim().toLowerCase() + "@" + STUDENT_DOMAIN;
 
 const VS = {
   en_attente: { label: "En attente", col: "#F59E0B" },
@@ -68,10 +74,10 @@ function useOrders() {
   return { orders: items, loading, addOrder, editOrder, removeOrder, reload };
 }
 
-// Élèves = profils role='eleve' (lecture seule ; comptes gérés dans Supabase).
+// Élèves = profils role='eleve'. Gérés via l'Edge Function (admin) ; reload après mutation.
 function useStudents() {
-  const { items, loading } = useCollection(listStudents, "profiles");
-  return { students: items, loading };
+  const { items, loading, reload } = useCollection(listStudents, "profiles");
+  return { students: items, loading, reloadStudents: reload };
 }
 
 // Session : compte staff connecté → { id, name, role }.
@@ -308,7 +314,7 @@ function LoginView() {
   const [u,su]=useState(""); const [p,sp]=useState(""); const [err,se]=useState(""); const [msg,sm]=useState(""); const [busy,sb]=useState(false);
   const go=async()=>{
     se(""); sb(true);
-    const { error } = await supabase.auth.signInWithPassword({ email: u.trim(), password: p });
+    const { error } = await supabase.auth.signInWithPassword({ email: toLoginEmail(u), password: p });
     sb(false);
     if (error) se("Identifiants incorrects");
     // En cas de succès, onAuthStateChange (useSession) bascule l'application.
@@ -337,14 +343,14 @@ function LoginView() {
   return (
     <AuthCard>
       <div style={{ display:"flex", flexDirection:"column", gap:14 }} onKeyDown={e=>{if(e.key==="Enter"&&!busy)go();}}>
-        <Inp label="E-mail" value={u} onChange={su} type="email" placeholder="prenom.nom@exemple.fr"/>
+        <Inp label="E-mail (staff) ou identifiant (élève)" value={u} onChange={su} placeholder="prenom.nom@… ou Etudiant1"/>
         <Inp label="Mot de passe" value={p} onChange={sp} type="password" placeholder="••••••••"/>
         {err && <p style={{ color:"#f87171", fontSize:13, textAlign:"center", margin:0 }}>{err}</p>}
         <Btn full onClick={go} disabled={busy}>{busy?"Connexion…":"Se connecter"}</Btn>
-        <button onClick={()=>{setMode("forgot");se("");sm("");}} style={{ background:"none", border:"none", color:"#60a5fa", cursor:"pointer", fontSize:13 }}>Mot de passe oublié ?</button>
+        <button onClick={()=>{setMode("forgot");se("");sm("");}} style={{ background:"none", border:"none", color:"#60a5fa", cursor:"pointer", fontSize:13 }}>Mot de passe oublié ? (staff)</button>
       </div>
       <div style={{ marginTop:20, padding:12, background:"#0a1628", borderRadius:8, fontSize:12, color:C.mut, textAlign:"center" }}>
-        Accès réservé au personnel (enseignants / administration).
+        Staff : e-mail + mot de passe · Élèves : identifiant « EtudiantN » + mot de passe.
       </div>
     </AuthCard>
   );
@@ -847,15 +853,42 @@ function HistoryView({ orders, nav, selOrd }) {
   );
 }
 
-function AdminPanel({ students, staff, orders }) {
+function AdminPanel({ students, staff, orders, isAdmin, notify, reloadStudents }) {
   const [tab,st]=useState("students");
+  const [nu,snu]=useState({name:"",group:"",password:""});
+  const [busy,sbusy]=useState(false);
+  const [lastCreated,setLastCreated]=useState(null); // {identifier,password} à communiquer à l'élève
   const stats=[
     {l:"Total interventions",v:orders.length,c:"#60a5fa"},{l:"En attente",v:orders.filter(o=>o.status==="en_attente").length,c:"#f59e0b"},
     {l:"En cours",v:orders.filter(o=>o.status==="en_cours").length,c:"#3b82f6"},{l:"Terminees",v:orders.filter(o=>o.status==="termine").length,c:"#34d399"},
     {l:"Clients",v:orders.filter(o=>o.vtype==="client").length,c:"#a78bfa"},{l:"Pedagogiques",v:orders.filter(o=>o.vtype==="peda").length,c:"#fb923c"},
     {l:"Signes",v:orders.filter(o=>o.signature).length,c:"#34d399"},{l:"Staff",v:staff.length,c:C.txt},{l:"Eleves",v:students.length,c:"#86efac"},
   ];
-  const accountNote="Les comptes (personnel et élèves « Étudiant Technicien ») sont créés dans le tableau de bord Supabase → Authentication → Users. Ajouter le rôle et le groupe dans User Metadata, ex. : { \"name\": \"Jean Martin\", \"role\": \"eleve\", \"grp\": \"G1-MV\" }. Cette liste est en lecture seule.";
+  const addStu=async()=>{
+    if(!nu.name.trim()){notify("Le nom de l'élève est obligatoire","error");return;}
+    if(nu.password.length<6){notify("Mot de passe : 6 caractères minimum","error");return;}
+    sbusy(true);
+    try{
+      const r=await createStudent({name:nu.name.trim(),group:nu.group.trim(),password:nu.password});
+      setLastCreated({identifier:r.identifier,password:nu.password});
+      snu({name:"",group:"",password:""});
+      notify("Compte élève créé : "+r.identifier);
+      reloadStudents();
+    }catch(e){ console.error(e); notify("Erreur : "+(e.message||e),"error"); }
+    finally{ sbusy(false); }
+  };
+  const delStu=async(u)=>{
+    if(!window.confirm("Supprimer le compte de "+u.name+" ("+u.identifier+") ?"))return;
+    try{ await deleteStudentAccount(u.id); notify("Compte supprimé"); reloadStudents(); }
+    catch(e){ console.error(e); notify("Erreur : "+(e.message||e),"error"); }
+  };
+  const resetStu=async(u)=>{
+    const np=window.prompt("Nouveau mot de passe pour "+u.name+" ("+u.identifier+") :");
+    if(np==null)return;
+    if(np.length<6){notify("Mot de passe : 6 caractères minimum","error");return;}
+    try{ await resetStudentPassword(u.id,np); notify("Mot de passe réinitialisé"); }
+    catch(e){ console.error(e); notify("Erreur : "+(e.message||e),"error"); }
+  };
   return (
     <div>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20,flexWrap:"wrap",gap:12}}>
@@ -868,16 +901,44 @@ function AdminPanel({ students, staff, orders }) {
         ))}
       </div>
       {tab==="students"&&(
-        <div style={{display:"flex",flexDirection:"column",gap:8}}>
-          <Crd style={{background:"#0a1628"}}>
-            <p style={{color:C.sub,fontSize:13,margin:0}}>{accountNote}</p>
-          </Crd>
+        <div style={{display:"flex",flexDirection:"column",gap:14}}>
+          {isAdmin ? (
+            <Crd>
+              <h3 style={{color:"#60a5fa",fontSize:14,fontWeight:700,marginBottom:12}}>Créer un compte élève</h3>
+              <p style={{color:C.mut,fontSize:12,marginBottom:12}}>L'identifiant de connexion (« EtudiantN ») est généré automatiquement.</p>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:12,marginBottom:12}}>
+                <Inp label="Nom complet *" value={nu.name} onChange={v=>snu(p=>({...p,name:v}))} placeholder="Jean Martin"/>
+                <Inp label="Groupe / Classe" value={nu.group} onChange={v=>snu(p=>({...p,group:v}))} placeholder="G1-MV"/>
+                <Inp label="Mot de passe *" value={nu.password} onChange={v=>snu(p=>({...p,password:v}))} type="password" placeholder="6 caractères min."/>
+              </div>
+              <Btn sm onClick={addStu} disabled={busy}>{busy?"Création…":"+ Créer le compte élève"}</Btn>
+              {lastCreated&&(
+                <div style={{marginTop:12,padding:12,background:"#052e16",border:"1px solid #16a34a55",borderRadius:8,fontSize:13,color:"#dcfce7"}}>
+                  ✅ Compte créé — à communiquer à l'élève :<br/>
+                  Identifiant : <b>{lastCreated.identifier}</b> · Mot de passe : <b>{lastCreated.password}</b>
+                </div>
+              )}
+            </Crd>
+          ) : (
+            <Crd style={{background:"#0a1628"}}>
+              <p style={{color:C.sub,fontSize:13,margin:0}}>La gestion des comptes élèves est réservée à l'administrateur.</p>
+            </Crd>
+          )}
           {students.length===0&&<Crd><p style={{color:C.mut,textAlign:"center",margin:0}}>Aucun élève enregistré</p></Crd>}
           {students.map(u=>(
             <Crd key={u.id}>
               <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
-                <span style={{color:C.txt,fontWeight:600,flex:1}}>{u.name}</span>
-                {u.group&&<span style={{fontSize:11,padding:"2px 8px",borderRadius:999,fontWeight:600,background:"#052e16",color:"#86efac"}}>{u.group}</span>}
+                <div style={{flex:1}}>
+                  <span style={{color:C.txt,fontWeight:600}}>{u.name}</span>
+                  {u.group&&<span style={{marginLeft:8,fontSize:11,padding:"2px 8px",borderRadius:999,fontWeight:600,background:"#052e16",color:"#86efac"}}>{u.group}</span>}
+                  {u.identifier&&<div style={{color:C.mut,fontSize:12,marginTop:2}}>🔑 {u.identifier}</div>}
+                </div>
+                {isAdmin&&(
+                  <div style={{display:"flex",gap:6}}>
+                    <Btn sm ghost onClick={()=>resetStu(u)}>Réinit. mdp</Btn>
+                    <Btn sm danger onClick={()=>delStu(u)}>Supprimer</Btn>
+                  </div>
+                )}
               </div>
             </Crd>
           ))}
@@ -886,7 +947,7 @@ function AdminPanel({ students, staff, orders }) {
       {tab==="staff"&&(
         <div style={{display:"flex",flexDirection:"column",gap:8}}>
           <Crd style={{background:"#0a1628"}}>
-            <p style={{color:C.sub,fontSize:13,margin:0}}>{accountNote}</p>
+            <p style={{color:C.sub,fontSize:13,margin:0}}>Les comptes du personnel (enseignants / administration) sont gérés dans le tableau de bord Supabase (Authentication → Users). Liste en lecture seule.</p>
           </Crd>
           {staff.map(s=>{const rs=ROLE_STYLE[s.role]||{bg:"#1e293b",cl:C.sub};return(
             <Crd key={s.id}>
@@ -910,7 +971,7 @@ function AdminPanel({ students, staff, orders }) {
 export default function DMSApp() {
   const { user:cu, ready, recovery, clearRecovery } = useSession();
   const { orders, addOrder, editOrder } = useOrders();
-  const { students } = useStudents();
+  const { students, reloadStudents } = useStudents();
   const [staff,setStaff]=useState([]);
   const [page,sp]=useState("dashboard");
   const [selId,ssi]=useState(null); const [sideOpen,sso]=useState(false);
@@ -923,7 +984,7 @@ export default function DMSApp() {
   if(!ready)return(<div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:C.bg,color:C.sub,fontFamily:"system-ui,sans-serif"}}>Chargement…</div>);
   if(recovery)return<ResetPasswordView notify={notify} onDone={async()=>{clearRecovery();await supabase.auth.signOut();}}/>;
   if(!cu)return<LoginView/>;
-  const isStaff=true;
+  const isStaff=true; const isAdmin=cu.role==="admin";
   const rs=ROLE_STYLE[cu.role]||{bg:"#1e293b",cl:C.sub};
   const renderPage=()=>{
     if(page==="dashboard")    return<Dashboard orders={orders} user={cu} nav={nav} selOrd={ssi}/>;
@@ -931,7 +992,7 @@ export default function DMSApp() {
     if(page==="new-order")    return isStaff?<NewOrderForm addOrder={addOrder} teachers={staff} students={students} user={cu} nav={nav} selOrd={ssi} notify={notify}/>:null;
     if(page==="order-detail") return selId?<OrderDetail orderId={selId} orders={orders} editOrder={editOrder} user={cu} nav={nav} notify={notify}/>:null;
     if(page==="history")      return<HistoryView orders={orders} nav={nav} selOrd={ssi}/>;
-    if(page==="admin")        return isStaff?<AdminPanel students={students} staff={staff} orders={orders}/>:null;
+    if(page==="admin")        return isStaff?<AdminPanel students={students} staff={staff} orders={orders} isAdmin={isAdmin} notify={notify} reloadStudents={reloadStudents}/>:null;
     return null;
   };
   return (

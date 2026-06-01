@@ -15,6 +15,7 @@ create table if not exists profiles (
   name       text not null,
   role       text not null default 'enseignant' check (role in ('admin','enseignant','eleve')),
   grp        text default '',          -- groupe / classe de l'élève (ex. G1-MV)
+  identifier text,                     -- identifiant de connexion élève (ex. « Etudiant1 »)
   created_at timestamptz default now()
 );
 
@@ -112,11 +113,12 @@ declare r text := coalesce(new.raw_user_meta_data->>'role', 'enseignant');
 begin
   -- rôle lu depuis les metadata (name/role/grp) ; fallback sûr si valeur invalide
   if r not in ('admin','enseignant','eleve') then r := 'enseignant'; end if;
-  insert into public.profiles(id, name, role, grp)
+  insert into public.profiles(id, name, role, grp, identifier)
   values (new.id,
           coalesce(new.raw_user_meta_data->>'name', new.email),
           r,
-          coalesce(new.raw_user_meta_data->>'grp', ''))
+          coalesce(new.raw_user_meta_data->>'grp', ''),
+          new.raw_user_meta_data->>'identifier')
   on conflict (id) do nothing;
   return new;
 end;

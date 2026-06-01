@@ -4,7 +4,15 @@ import {
   listOrders, insertOrder, updateOrder as dbUpdateOrder, deleteOrder,
   listStudents, listStaff,
   createStudent, createTeacher, deleteAccount, resetPassword,
+  archiveOrder,
 } from "./data";
+
+// Archive un OR en PDF sur le Drive (asynchrone, non bloquant).
+function archiveToDrive(order, notify) {
+  archiveOrder({ html: orderHTML(order), folder: orderFolder(order), orderNum: order.orderNum })
+    .then(() => notify && notify("Ordre archivé sur le Drive"))
+    .catch((e) => { console.error("[DMS] archivage Drive", e); notify && notify("Archivage Drive non effectué : " + (e.message || e), "error"); });
+}
 
 // Domaine interne des identifiants élèves (doit correspondre à l'Edge Function).
 const STUDENT_DOMAIN = "eleve.gallieni.local";
@@ -138,7 +146,7 @@ function toCSV(orders) {
 }
 
 // ── PDF ──
-function generatePDF(order) {
+function orderHTML(order) {
   const isPeda = order.vtype === "peda";
   const sLabel = VS[order.status] ? VS[order.status].label : "En attente";
   const sColor = order.status==="termine" ? "#065f46" : order.status==="en_cours" ? "#1e40af" : "#92400e";
@@ -197,6 +205,16 @@ ${exitBlock}
 </div>
 <div class="foot">Lycee Gallieni – BTS Maintenance des Vehicules &nbsp;|&nbsp; ${esc(order.orderNum)} &nbsp;|&nbsp; Imprime le ${new Date().toLocaleDateString("fr-FR")}</div>
 </div></body></html>`;
+  return html;
+}
+
+// Dossier de destination sur le Drive : nom du client, ou « Pédagogique ».
+function orderFolder(order) {
+  return order.vtype === "peda" ? "Pédagogique" : (order.clientName || "").trim() || "Client sans nom";
+}
+
+function generatePDF(order) {
+  const html = orderHTML(order);
   try {
     const blob = new Blob([html], { type:"text/html;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
@@ -566,6 +584,7 @@ function NewOrderForm({ addOrder, teachers, students, user, nav, selOrd, notify 
     try {
       const created=await addOrder(o);
       selOrd(created.id);nav("order-detail");notify("Ordre de réparation "+created.orderNum+" créé");
+      archiveToDrive(created, notify);   // archivage PDF sur le Drive (création)
     } catch(e){ console.error(e); notify("Erreur lors de la création : "+(e.message||e),"error"); }
     finally { sbusy(false); }
   };
@@ -696,6 +715,7 @@ function OrderDetail({ orderId, orders, editOrder, user, nav, notify, students }
         </div>
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
           <Btn sm ghost onClick={()=>generatePDF(o)} style={{borderColor:"#3b82f6",color:"#60a5fa"}}>📄 PDF</Btn>
+          {isStaff&&<Btn sm ghost onClick={()=>archiveToDrive(o,notify)} style={{borderColor:"#16a34a",color:"#34d399"}}>📁 Archiver Drive</Btn>}
           {isStaff&&o.status!=="termine"&&(
             <>
               {o.status==="en_attente"&&<Btn sm onClick={()=>{upd({status:"en_cours"});notify("Intervention demarree");}}>▶ Demarrer</Btn>}
@@ -799,7 +819,7 @@ function OrderDetail({ orderId, orders, editOrder, user, nav, notify, students }
           </div>
         </Crd>
       )}
-      {showExit&&<ExitModal o={o} onOk={d=>{upd({...d,status:"termine"});sse(false);st("exit");notify("Sortie du vehicule enregistree");}} onClose={()=>sse(false)}/>}
+      {showExit&&<ExitModal o={o} onOk={d=>{upd({...d,status:"termine"});sse(false);st("exit");notify("Sortie du vehicule enregistree");archiveToDrive({...o,...d,status:"termine"},notify);}} onClose={()=>sse(false)}/>}
     </div>
   );
 }

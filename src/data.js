@@ -100,6 +100,14 @@ export const deleteAccount = (id) => callManageStudents({ action: "delete", id }
 export const resetPassword = (id, password) =>
   callManageStudents({ action: "reset_password", id, password });
 
+// ── Archivage d'un OR en PDF sur Google Drive (via Edge Function passerelle) ──
+export async function archiveOrder({ html, folder, orderNum }) {
+  const { data, error } = await supabase.functions.invoke("archive-order", { body: { html, folder, orderNum } });
+  if (error) throw error;
+  if (!data?.ok) throw new Error(data?.error || "Erreur d'archivage Drive");
+  return data;
+}
+
 // ── Staff = profils admin/enseignant ────────────────────────────────────────
 export async function listStaff() {
   const { data, error } = await supabase

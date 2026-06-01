@@ -78,6 +78,7 @@ function useStudents() {
 function useSession() {
   const [user, setUser] = useState(null);
   const [ready, setReady] = useState(false);
+  const [recovery, setRecovery] = useState(false);
   useEffect(() => {
     let active = true;
     const loadProfile = async (session) => {
@@ -92,10 +93,13 @@ function useSession() {
       setReady(true);
     };
     supabase.auth.getSession().then(({ data }) => loadProfile(data.session));
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => loadProfile(session));
+    const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "PASSWORD_RECOVERY") setRecovery(true);
+      loadProfile(session);
+    });
     return () => { active = false; sub.subscription.unsubscribe(); };
   }, []);
-  return { user, ready };
+  return { user, ready, recovery, clearRecovery: () => setRecovery(false) };
 }
 
 function useDesktop() {
@@ -281,15 +285,10 @@ function SigPad({ onSave, init }) {
   );
 }
 
-function LoginView() {
-  const [u,su]=useState(""); const [p,sp]=useState(""); const [err,se]=useState(""); const [busy,sb]=useState(false);
-  const go=async()=>{
-    se(""); sb(true);
-    const { error } = await supabase.auth.signInWithPassword({ email: u.trim(), password: p });
-    sb(false);
-    if (error) se("Identifiants incorrects");
-    // En cas de succès, onAuthStateChange (useSession) bascule l'application.
-  };
+// URL de retour des emails Supabase (respecte le base path GitHub Pages).
+const APP_URL = window.location.origin + import.meta.env.BASE_URL;
+
+function AuthCard({ children }) {
   return (
     <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:C.bg, padding:16 }}>
       <div style={{ background:C.card, borderRadius:16, padding:32, width:"100%", maxWidth:380, border:"1px solid "+C.bdr, boxShadow:"0 25px 60px rgba(0,0,0,.6)" }}>
@@ -298,17 +297,83 @@ function LoginView() {
           <h1 style={{ color:C.txt, fontSize:22, fontWeight:700, margin:0 }}>DMS – Atelier BTS MV</h1>
           <p style={{ color:C.mut, fontSize:13, marginTop:6 }}>Lycee Gallieni</p>
         </div>
-        <div style={{ display:"flex", flexDirection:"column", gap:14 }} onKeyDown={e=>{if(e.key==="Enter"&&!busy)go();}}>
-          <Inp label="E-mail" value={u} onChange={su} type="email" placeholder="prenom.nom@exemple.fr"/>
-          <Inp label="Mot de passe" value={p} onChange={sp} type="password" placeholder="••••••••"/>
-          {err && <p style={{ color:"#f87171", fontSize:13, textAlign:"center", margin:0 }}>{err}</p>}
-          <Btn full onClick={go} disabled={busy}>{busy?"Connexion…":"Se connecter"}</Btn>
-        </div>
-        <div style={{ marginTop:20, padding:12, background:"#0a1628", borderRadius:8, fontSize:12, color:C.mut, textAlign:"center" }}>
-          Accès réservé au personnel (enseignants / administration).
-        </div>
+        {children}
       </div>
     </div>
+  );
+}
+
+function LoginView() {
+  const [mode,setMode]=useState("login"); // "login" | "forgot"
+  const [u,su]=useState(""); const [p,sp]=useState(""); const [err,se]=useState(""); const [msg,sm]=useState(""); const [busy,sb]=useState(false);
+  const go=async()=>{
+    se(""); sb(true);
+    const { error } = await supabase.auth.signInWithPassword({ email: u.trim(), password: p });
+    sb(false);
+    if (error) se("Identifiants incorrects");
+    // En cas de succès, onAuthStateChange (useSession) bascule l'application.
+  };
+  const sendReset=async()=>{
+    se(""); sm("");
+    if(!u.trim()){se("Saisis ton e-mail");return;}
+    sb(true);
+    const { error } = await supabase.auth.resetPasswordForEmail(u.trim(), { redirectTo: APP_URL });
+    sb(false);
+    if(error){se(error.message);return;}
+    sm("Si un compte existe pour cet e-mail, un lien de réinitialisation vient d'être envoyé.");
+  };
+  if(mode==="forgot")return(
+    <AuthCard>
+      <div style={{ display:"flex", flexDirection:"column", gap:14 }} onKeyDown={e=>{if(e.key==="Enter"&&!busy)sendReset();}}>
+        <p style={{ color:C.sub, fontSize:13, margin:0 }}>Saisis ton e-mail : tu recevras un lien pour définir un nouveau mot de passe.</p>
+        <Inp label="E-mail" value={u} onChange={su} type="email" placeholder="prenom.nom@exemple.fr"/>
+        {err && <p style={{ color:"#f87171", fontSize:13, textAlign:"center", margin:0 }}>{err}</p>}
+        {msg && <p style={{ color:"#34d399", fontSize:13, textAlign:"center", margin:0 }}>{msg}</p>}
+        <Btn full onClick={sendReset} disabled={busy}>{busy?"Envoi…":"Envoyer le lien"}</Btn>
+        <button onClick={()=>{setMode("login");se("");sm("");}} style={{ background:"none", border:"none", color:"#60a5fa", cursor:"pointer", fontSize:13 }}>← Retour à la connexion</button>
+      </div>
+    </AuthCard>
+  );
+  return (
+    <AuthCard>
+      <div style={{ display:"flex", flexDirection:"column", gap:14 }} onKeyDown={e=>{if(e.key==="Enter"&&!busy)go();}}>
+        <Inp label="E-mail" value={u} onChange={su} type="email" placeholder="prenom.nom@exemple.fr"/>
+        <Inp label="Mot de passe" value={p} onChange={sp} type="password" placeholder="••••••••"/>
+        {err && <p style={{ color:"#f87171", fontSize:13, textAlign:"center", margin:0 }}>{err}</p>}
+        <Btn full onClick={go} disabled={busy}>{busy?"Connexion…":"Se connecter"}</Btn>
+        <button onClick={()=>{setMode("forgot");se("");sm("");}} style={{ background:"none", border:"none", color:"#60a5fa", cursor:"pointer", fontSize:13 }}>Mot de passe oublié ?</button>
+      </div>
+      <div style={{ marginTop:20, padding:12, background:"#0a1628", borderRadius:8, fontSize:12, color:C.mut, textAlign:"center" }}>
+        Accès réservé au personnel (enseignants / administration).
+      </div>
+    </AuthCard>
+  );
+}
+
+// Écran de définition d'un nouveau mot de passe (après clic sur le lien email).
+function ResetPasswordView({ notify, onDone }) {
+  const [p,sp]=useState(""); const [p2,sp2]=useState(""); const [err,se]=useState(""); const [busy,sb]=useState(false);
+  const go=async()=>{
+    se("");
+    if(p.length<6){se("6 caractères minimum");return;}
+    if(p!==p2){se("Les deux mots de passe ne correspondent pas");return;}
+    sb(true);
+    const { error } = await supabase.auth.updateUser({ password:p });
+    sb(false);
+    if(error){se(error.message);return;}
+    notify("Mot de passe modifié. Reconnecte-toi.");
+    onDone();
+  };
+  return (
+    <AuthCard>
+      <div style={{ display:"flex", flexDirection:"column", gap:14 }} onKeyDown={e=>{if(e.key==="Enter"&&!busy)go();}}>
+        <p style={{ color:C.sub, fontSize:13, margin:0 }}>Définis ton nouveau mot de passe.</p>
+        <Inp label="Nouveau mot de passe" value={p} onChange={sp} type="password" placeholder="••••••••"/>
+        <Inp label="Confirmer" value={p2} onChange={sp2} type="password" placeholder="••••••••"/>
+        {err && <p style={{ color:"#f87171", fontSize:13, textAlign:"center", margin:0 }}>{err}</p>}
+        <Btn full onClick={go} disabled={busy}>{busy?"Enregistrement…":"Modifier le mot de passe"}</Btn>
+      </div>
+    </AuthCard>
   );
 }
 
@@ -886,7 +951,7 @@ function AdminPanel({ students, addStudent, editStudent, removeStudent, staff, o
 }
 
 export default function DMSApp() {
-  const { user:cu, ready } = useSession();
+  const { user:cu, ready, recovery, clearRecovery } = useSession();
   const { orders, addOrder, editOrder } = useOrders();
   const { students, addStudent, editStudent, removeStudent } = useStudents();
   const [staff,setStaff]=useState([]);
@@ -899,6 +964,7 @@ export default function DMSApp() {
   const nav=p=>{sp(p);sso(false);};
   const logout=async()=>{ await supabase.auth.signOut(); sp("dashboard"); ssi(null); };
   if(!ready)return(<div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:C.bg,color:C.sub,fontFamily:"system-ui,sans-serif"}}>Chargement…</div>);
+  if(recovery)return<ResetPasswordView notify={notify} onDone={async()=>{clearRecovery();await supabase.auth.signOut();}}/>;
   if(!cu)return<LoginView/>;
   const isStaff=true; const isAdmin=cu.role==="admin";
   const rs=ROLE_STYLE[cu.role]||{bg:"#1e293b",cl:C.sub};

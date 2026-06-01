@@ -663,7 +663,7 @@ function NewOrderForm({ addOrder, teachers, students, user, nav, selOrd, notify 
   );
 }
 
-function OrderDetail({ orderId, orders, editOrder, user, nav, notify }) {
+function OrderDetail({ orderId, orders, editOrder, user, nav, notify, students }) {
   const [tab,st]=useState("tasks"); const [showExit,sse]=useState(false); const [newTask,snt]=useState("");
   const o=orders.find(x=>x.id===orderId);
   const [obs,setObs]=useState(o?o.observations||"":""); const [adds,setAdds]=useState(o?o.additionalSales||"":"");
@@ -717,6 +717,26 @@ function OrderDetail({ orderId, orders, editOrder, user, nav, notify }) {
         </div>
         {o.reason&&<div style={{marginTop:12,paddingTop:12,borderTop:"1px solid "+C.bdr,fontSize:13,color:C.sub}}><b>Motif : </b><span style={{color:C.txt}}>{o.reason}</span></div>}
       </Crd>
+      {isStaff&&(
+        <Crd style={{marginBottom:12}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8,marginBottom:10}}>
+            <h3 style={{color:"#60a5fa",fontSize:14,fontWeight:700,margin:0}}>🎓 Élèves affectés</h3>
+            {o.assignedStudents.length>0&&<span style={{color:C.sub,fontSize:12}}>{o.assignedStudents.length} affecté(s)</span>}
+          </div>
+          {(!students||students.length===0)?(
+            <p style={{color:C.mut,fontSize:13,margin:0}}>Aucun compte élève. Crée-les dans Administration → 🎓 Élèves, ils apparaîtront ici.</p>
+          ):(
+            <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+              {students.map(stu=>{
+                const sel=o.assignedStudents.includes(stu.name);
+                return <button key={stu.id} onClick={()=>{const na=sel?o.assignedStudents.filter(n=>n!==stu.name):[...o.assignedStudents,stu.name];upd({assignedStudents:na});}}
+                  style={{padding:"6px 12px",borderRadius:6,cursor:"pointer",fontSize:13,border:"1px solid "+(sel?"#2563eb":C.bdr),background:sel?C.acc:"transparent",color:sel?"#fff":C.sub}}>
+                  {sel?"✓ ":""}{stu.name}{stu.group?<span style={{fontSize:11,opacity:.7}}> ({stu.group})</span>:null}</button>;
+              })}
+            </div>
+          )}
+        </Crd>
+      )}
       <div style={{display:"flex",borderBottom:"1px solid "+C.bdr,marginBottom:14}}>
         {TABS.map(t=>(
           <button key={t.id} onClick={()=>st(t.id)} style={{padding:"10px 16px",border:"none",background:"transparent",cursor:"pointer",fontSize:13,fontWeight:tab===t.id?700:400,color:tab===t.id?"#60a5fa":C.sub,borderBottom:tab===t.id?"2px solid #3b82f6":"2px solid transparent",marginBottom:-1}}>{t.l}</button>
@@ -1044,7 +1064,7 @@ export default function DMSApp() {
     if(page==="dashboard")    return<Dashboard orders={orders} user={cu} nav={nav} selOrd={ssi}/>;
     if(page==="orders")       return<OrdersList orders={orders} user={cu} nav={nav} selOrd={ssi}/>;
     if(page==="new-order")    return isStaff?<NewOrderForm addOrder={addOrder} teachers={staff} students={students} user={cu} nav={nav} selOrd={ssi} notify={notify}/>:null;
-    if(page==="order-detail") return selId?<OrderDetail orderId={selId} orders={orders} editOrder={editOrder} user={cu} nav={nav} notify={notify}/>:null;
+    if(page==="order-detail") return selId?<OrderDetail orderId={selId} orders={orders} editOrder={editOrder} user={cu} nav={nav} notify={notify} students={students}/>:null;
     if(page==="history")      return<HistoryView orders={orders} nav={nav} selOrd={ssi}/>;
     if(page==="admin")        return isStaff?<AdminPanel students={students} staff={staff} orders={orders} isAdmin={isAdmin} notify={notify} reloadStudents={reloadStudents} reloadStaff={reloadStaff} currentId={cu.id}/>:null;
     return null;

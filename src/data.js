@@ -22,6 +22,8 @@ export function rowToOrder(r) {
     teacher: r.teacher || "",
     // affichage attendu : chaîne "Nom1, Nom2"
     students: Array.isArray(r.assigned_students) ? r.assigned_students.join(", ") : "",
+    // tableau brut pour l'édition de l'affectation
+    assignedStudents: Array.isArray(r.assigned_students) ? r.assigned_students : [],
     reason: r.reason || "",
     entryDate: r.entry_date || "", entryTime: r.entry_time || "",
     exitDate: r.exit_date || "", exitTime: r.exit_time || "", exitCondition: r.exit_condition || "",

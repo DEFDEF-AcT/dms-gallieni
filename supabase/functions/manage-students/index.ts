@@ -37,7 +37,7 @@ Deno.serve(async (req) => {
     const { data: prof } = await admin.from("profiles").select("role").eq("id", user.id).single();
     if (prof?.role !== "admin") return json({ ok: false, error: "Réservé à l'administrateur" });
 
-    const { action, name, grp, password, id } = await req.json();
+    const { action, name, grp, password, id, identifier } = await req.json();
 
     if (action === "create") {
       if (!name || !password) return json({ ok: false, error: "Nom et mot de passe requis" });
@@ -59,8 +59,28 @@ Deno.serve(async (req) => {
       return json({ ok: true, identifier, id: created.user.id, name, grp: grp ?? "" });
     }
 
+    if (action === "create_teacher") {
+      const ident = String(identifier ?? "").trim();
+      if (!ident || !name || !password) return json({ ok: false, error: "Identifiant, nom et mot de passe requis" });
+      if (/[@\s]/.test(ident)) return json({ ok: false, error: "Identifiant sans espace ni @" });
+      if (String(password).length < 6) return json({ ok: false, error: "Mot de passe : 6 caractères minimum" });
+      // unicité de l'identifiant (insensible à la casse)
+      const { data: clash } = await admin.from("profiles").select("id").ilike("identifier", ident);
+      if (clash && clash.length) return json({ ok: false, error: "Identifiant déjà utilisé" });
+      const email = `${ident.toLowerCase()}@${DOMAIN}`;
+      const { data: created, error: cErr } = await admin.auth.admin.createUser({
+        email, password, email_confirm: true,
+        user_metadata: { name, role: "enseignant", identifier: ident },
+      });
+      if (cErr) return json({ ok: false, error: cErr.message });
+      return json({ ok: true, identifier: ident, id: created.user.id, name });
+    }
+
     if (action === "delete") {
       if (!id) return json({ ok: false, error: "id requis" });
+      if (id === user.id) return json({ ok: false, error: "Impossible de supprimer son propre compte" });
+      const { data: target } = await admin.from("profiles").select("role").eq("id", id).single();
+      if (target?.role === "admin") return json({ ok: false, error: "Impossible de supprimer un administrateur" });
       const { error: dErr } = await admin.auth.admin.deleteUser(id);
       if (dErr) return json({ ok: false, error: dErr.message });
       return json({ ok: true });

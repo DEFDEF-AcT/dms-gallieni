@@ -3,7 +3,7 @@ import { supabase } from "./supabase";
 import {
   listOrders, insertOrder, updateOrder as dbUpdateOrder, deleteOrder,
   listStudents, listStaff,
-  createStudent, deleteStudentAccount, resetStudentPassword,
+  createStudent, createTeacher, deleteAccount, resetPassword,
 } from "./data";
 
 // Domaine interne des identifiants élèves (doit correspondre à l'Edge Function).
@@ -853,11 +853,38 @@ function HistoryView({ orders, nav, selOrd }) {
   );
 }
 
-function AdminPanel({ students, staff, orders, isAdmin, notify, reloadStudents }) {
+function AdminPanel({ students, staff, orders, isAdmin, notify, reloadStudents, reloadStaff, currentId }) {
   const [tab,st]=useState("students");
   const [nu,snu]=useState({name:"",group:"",password:""});
   const [busy,sbusy]=useState(false);
   const [lastCreated,setLastCreated]=useState(null); // {identifier,password} à communiquer à l'élève
+  const [nt,snt]=useState({identifier:"",name:"",password:""});
+  const [tbusy,stbusy]=useState(false);
+  const [lastT,setLastT]=useState(null);
+  const addTeacher=async()=>{
+    if(!nt.identifier.trim()||!nt.name.trim()){notify("Identifiant et pseudo obligatoires","error");return;}
+    if(nt.password.length<6){notify("Mot de passe : 6 caractères minimum","error");return;}
+    stbusy(true);
+    try{
+      const r=await createTeacher({identifier:nt.identifier.trim(),name:nt.name.trim(),password:nt.password});
+      setLastT({identifier:r.identifier,password:nt.password});
+      snt({identifier:"",name:"",password:""});
+      notify("Compte enseignant créé : "+r.identifier);
+      reloadStaff();
+    }catch(e){ console.error(e); notify("Erreur : "+(e.message||e),"error"); }
+    finally{ stbusy(false); }
+  };
+  const delStaff=async(s)=>{
+    if(!window.confirm("Supprimer le compte de "+s.name+" ("+s.identifier+") ?"))return;
+    try{ await deleteAccount(s.id); notify("Compte supprimé"); reloadStaff(); }
+    catch(e){ console.error(e); notify("Erreur : "+(e.message||e),"error"); }
+  };
+  const resetStaff=async(s)=>{
+    const np=window.prompt("Nouveau mot de passe pour "+s.name+" :");
+    if(np==null)return; if(np.length<6){notify("Mot de passe : 6 caractères minimum","error");return;}
+    try{ await resetPassword(s.id,np); notify("Mot de passe réinitialisé"); }
+    catch(e){ console.error(e); notify("Erreur : "+(e.message||e),"error"); }
+  };
   const stats=[
     {l:"Total interventions",v:orders.length,c:"#60a5fa"},{l:"En attente",v:orders.filter(o=>o.status==="en_attente").length,c:"#f59e0b"},
     {l:"En cours",v:orders.filter(o=>o.status==="en_cours").length,c:"#3b82f6"},{l:"Terminees",v:orders.filter(o=>o.status==="termine").length,c:"#34d399"},
@@ -879,14 +906,14 @@ function AdminPanel({ students, staff, orders, isAdmin, notify, reloadStudents }
   };
   const delStu=async(u)=>{
     if(!window.confirm("Supprimer le compte de "+u.name+" ("+u.identifier+") ?"))return;
-    try{ await deleteStudentAccount(u.id); notify("Compte supprimé"); reloadStudents(); }
+    try{ await deleteAccount(u.id); notify("Compte supprimé"); reloadStudents(); }
     catch(e){ console.error(e); notify("Erreur : "+(e.message||e),"error"); }
   };
   const resetStu=async(u)=>{
     const np=window.prompt("Nouveau mot de passe pour "+u.name+" ("+u.identifier+") :");
     if(np==null)return;
     if(np.length<6){notify("Mot de passe : 6 caractères minimum","error");return;}
-    try{ await resetStudentPassword(u.id,np); notify("Mot de passe réinitialisé"); }
+    try{ await resetPassword(u.id,np); notify("Mot de passe réinitialisé"); }
     catch(e){ console.error(e); notify("Erreur : "+(e.message||e),"error"); }
   };
   return (
@@ -945,15 +972,41 @@ function AdminPanel({ students, staff, orders, isAdmin, notify, reloadStudents }
         </div>
       )}
       {tab==="staff"&&(
-        <div style={{display:"flex",flexDirection:"column",gap:8}}>
-          <Crd style={{background:"#0a1628"}}>
-            <p style={{color:C.sub,fontSize:13,margin:0}}>Les comptes du personnel (enseignants / administration) sont gérés dans le tableau de bord Supabase (Authentication → Users). Liste en lecture seule.</p>
-          </Crd>
-          {staff.map(s=>{const rs=ROLE_STYLE[s.role]||{bg:"#1e293b",cl:C.sub};return(
+        <div style={{display:"flex",flexDirection:"column",gap:14}}>
+          {isAdmin ? (
+            <Crd>
+              <h3 style={{color:"#60a5fa",fontSize:14,fontWeight:700,marginBottom:12}}>Créer un compte enseignant</h3>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:12,marginBottom:12}}>
+                <Inp label="Identifiant de connexion *" value={nt.identifier} onChange={v=>snt(p=>({...p,identifier:v}))} placeholder="jdupont"/>
+                <Inp label="Pseudo affiché *" value={nt.name} onChange={v=>snt(p=>({...p,name:v}))} placeholder="M. Dupont"/>
+                <Inp label="Mot de passe *" value={nt.password} onChange={v=>snt(p=>({...p,password:v}))} type="password" placeholder="6 caractères min."/>
+              </div>
+              <Btn sm onClick={addTeacher} disabled={tbusy}>{tbusy?"Création…":"+ Créer le compte enseignant"}</Btn>
+              {lastT&&(
+                <div style={{marginTop:12,padding:12,background:"#052e16",border:"1px solid #16a34a55",borderRadius:8,fontSize:13,color:"#dcfce7"}}>
+                  ✅ Compte créé — identifiant : <b>{lastT.identifier}</b> · mot de passe : <b>{lastT.password}</b>
+                </div>
+              )}
+            </Crd>
+          ) : (
+            <Crd style={{background:"#0a1628"}}>
+              <p style={{color:C.sub,fontSize:13,margin:0}}>La gestion des comptes du personnel est réservée à l'administrateur.</p>
+            </Crd>
+          )}
+          {staff.map(s=>{const rs=ROLE_STYLE[s.role]||{bg:"#1e293b",cl:C.sub};const protege=s.role==="admin"||s.id===currentId;return(
             <Crd key={s.id}>
               <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
-                <span style={{color:C.txt,fontWeight:600,flex:1}}>{s.name}</span>
+                <div style={{flex:1}}>
+                  <span style={{color:C.txt,fontWeight:600}}>{s.name}</span>
+                  {s.identifier&&<div style={{color:C.mut,fontSize:12,marginTop:2}}>🔑 {s.identifier}</div>}
+                </div>
                 <span style={{fontSize:11,padding:"2px 8px",borderRadius:999,fontWeight:600,background:rs.bg,color:rs.cl}}>{roleLabel(s.role)}</span>
+                {isAdmin&&!protege&&(
+                  <div style={{display:"flex",gap:6}}>
+                    <Btn sm ghost onClick={()=>resetStaff(s)}>Réinit. mdp</Btn>
+                    <Btn sm danger onClick={()=>delStaff(s)}>Supprimer</Btn>
+                  </div>
+                )}
               </div>
             </Crd>
           );})}
@@ -978,7 +1031,8 @@ export default function DMSApp() {
   const [notif,sn]=useState(null);
   const isDesktop=useDesktop();
   const notify=useCallback((msg,type)=>{sn({msg,type:type||"success"});setTimeout(()=>sn(null),3500);},[]);
-  useEffect(()=>{ if(cu) listStaff().then(setStaff).catch(e=>console.error(e)); },[cu]);
+  const reloadStaff=useCallback(()=>{ listStaff().then(setStaff).catch(e=>console.error(e)); },[]);
+  useEffect(()=>{ if(cu) reloadStaff(); },[cu,reloadStaff]);
   const nav=p=>{sp(p);sso(false);};
   const logout=async()=>{ await supabase.auth.signOut(); sp("dashboard"); ssi(null); };
   if(!ready)return(<div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:C.bg,color:C.sub,fontFamily:"system-ui,sans-serif"}}>Chargement…</div>);
@@ -992,7 +1046,7 @@ export default function DMSApp() {
     if(page==="new-order")    return isStaff?<NewOrderForm addOrder={addOrder} teachers={staff} students={students} user={cu} nav={nav} selOrd={ssi} notify={notify}/>:null;
     if(page==="order-detail") return selId?<OrderDetail orderId={selId} orders={orders} editOrder={editOrder} user={cu} nav={nav} notify={notify}/>:null;
     if(page==="history")      return<HistoryView orders={orders} nav={nav} selOrd={ssi}/>;
-    if(page==="admin")        return isStaff?<AdminPanel students={students} staff={staff} orders={orders} isAdmin={isAdmin} notify={notify} reloadStudents={reloadStudents}/>:null;
+    if(page==="admin")        return isStaff?<AdminPanel students={students} staff={staff} orders={orders} isAdmin={isAdmin} notify={notify} reloadStudents={reloadStudents} reloadStaff={reloadStaff} currentId={cu.id}/>:null;
     return null;
   };
   return (

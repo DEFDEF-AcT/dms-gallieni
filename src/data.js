@@ -90,14 +90,18 @@ async function callManageStudents(body) {
 // Crée un compte élève ; renvoie { identifier, id, name, grp }. L'identifiant est auto-généré.
 export const createStudent = ({ name, group, password }) =>
   callManageStudents({ action: "create", name, grp: group, password });
-export const deleteStudentAccount = (id) => callManageStudents({ action: "delete", id });
-export const resetStudentPassword = (id, password) =>
+// Crée un compte enseignant avec identifiant + pseudo choisis. Renvoie { identifier, id, name }.
+export const createTeacher = ({ identifier, name, password }) =>
+  callManageStudents({ action: "create_teacher", identifier, name, password });
+// Suppression / réinitialisation : fonctionnent pour tout compte (élève ou enseignant).
+export const deleteAccount = (id) => callManageStudents({ action: "delete", id });
+export const resetPassword = (id, password) =>
   callManageStudents({ action: "reset_password", id, password });
 
-// ── Staff = profils admin/enseignant (lecture seule) ───────────────────────
+// ── Staff = profils admin/enseignant ────────────────────────────────────────
 export async function listStaff() {
   const { data, error } = await supabase
-    .from("profiles").select("id,name,role").in("role", ["admin", "enseignant"]).order("name");
+    .from("profiles").select("id,name,role,identifier").in("role", ["admin", "enseignant"]).order("name");
   if (error) throw error;
-  return data.map((p) => ({ id: p.id, name: p.name, role: p.role }));
+  return data.map((p) => ({ id: p.id, name: p.name, role: p.role, identifier: p.identifier || "" }));
 }

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { supabase } from "./supabase";
 import {
   listOrders, insertOrder, updateOrder as dbUpdateOrder, deleteOrder,
-  listStudents, insertStudent, updateStudent, deleteStudent, listStaff,
+  listStudents, listStaff,
 } from "./data";
 
 const VS = {
@@ -19,6 +19,8 @@ const ROLE_STYLE = {
   enseignant: { bg:"#172554", cl:"#93c5fd" },
   eleve:      { bg:"#052e16", cl:"#86efac" },
 };
+const ROLE_LABEL = { admin:"Administrateur", enseignant:"Enseignant", eleve:"Étudiant Technicien" };
+const roleLabel = (r) => ROLE_LABEL[r] || r;
 
 const gid   = () => Date.now().toString(36) + Math.random().toString(36).slice(2,5);
 const today = () => new Date().toISOString().slice(0,10);
@@ -66,12 +68,10 @@ function useOrders() {
   return { orders: items, loading, addOrder, editOrder, removeOrder, reload };
 }
 
+// Élèves = profils role='eleve' (lecture seule ; comptes gérés dans Supabase).
 function useStudents() {
-  const { items, loading, reload } = useCollection(listStudents, "students");
-  const addStudent = useCallback(async (s) => { const r = await insertStudent(s); reload(); return r; }, [reload]);
-  const editStudent = useCallback(async (id, patch) => { const r = await updateStudent(id, patch); reload(); return r; }, [reload]);
-  const removeStudent = useCallback(async (id) => { await deleteStudent(id); reload(); }, [reload]);
-  return { students: items, loading, addStudent, editStudent, removeStudent };
+  const { items, loading } = useCollection(listStudents, "profiles");
+  return { students: items, loading };
 }
 
 // Session : compte staff connecté → { id, name, role }.
@@ -391,7 +391,7 @@ function Sidebar({ user, page, nav, logout }) {
       <div style={{ padding:"20px 16px 16px", borderBottom:"1px solid "+C.bdr }}>
         <div style={{ color:"#3b82f6", fontWeight:700, fontSize:14, marginBottom:8 }}>🔧 DMS Gallieni</div>
         <div style={{ color:C.txt, fontSize:13, fontWeight:600 }}>{user.name}</div>
-        <span style={{ fontSize:11, padding:"2px 8px", borderRadius:999, fontWeight:600, marginTop:4, display:"inline-block", background:rs.bg, color:rs.cl }}>{user.role}</span>
+        <span style={{ fontSize:11, padding:"2px 8px", borderRadius:999, fontWeight:600, marginTop:4, display:"inline-block", background:rs.bg, color:rs.cl }}>{roleLabel(user.role)}</span>
       </div>
       <nav style={{ flex:1, padding:"12px 8px", display:"flex", flexDirection:"column", gap:2 }}>
         {NAV.filter(n => !n.staff||isStaff).map(n => (
@@ -663,7 +663,8 @@ function OrderDetail({ orderId, orders, editOrder, user, nav, notify }) {
   const [obs,setObs]=useState(o?o.observations||"":""); const [adds,setAdds]=useState(o?o.additionalSales||"":"");
   useEffect(()=>{ if(o){ setObs(o.observations||""); setAdds(o.additionalSales||""); } },[orderId]); // eslint-disable-line
   if(!o)return<p style={{color:C.txt}}>Ordre introuvable.</p>;
-  const canEdit=user.role!=="eleve";
+  const canEdit=true;                     // tâches + notes : éditables par tous (staff + élèves)
+  const isStaff=user.role!=="eleve";      // démarrage / sortie véhicule : staff uniquement
   const isPeda=o.vtype==="peda";
   const upd=async(u)=>{ try{ await editOrder(orderId,u); }catch(e){ console.error(e); notify("Erreur lors de l'enregistrement","error"); } };
   const togTask=tid=>{
@@ -689,7 +690,7 @@ function OrderDetail({ orderId, orders, editOrder, user, nav, notify }) {
         </div>
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
           <Btn sm ghost onClick={()=>generatePDF(o)} style={{borderColor:"#3b82f6",color:"#60a5fa"}}>📄 PDF</Btn>
-          {canEdit&&o.status!=="termine"&&(
+          {isStaff&&o.status!=="termine"&&(
             <>
               {o.status==="en_attente"&&<Btn sm onClick={()=>{upd({status:"en_cours"});notify("Intervention demarree");}}>▶ Demarrer</Btn>}
               {o.status==="en_cours"&&<Btn sm onClick={()=>sse(true)} style={{background:"#065f46"}}>✅ Sortie vehicule</Btn>}
@@ -846,29 +847,15 @@ function HistoryView({ orders, nav, selOrd }) {
   );
 }
 
-function AdminPanel({ students, addStudent, editStudent, removeStudent, staff, orders, notify, isAdmin }) {
+function AdminPanel({ students, staff, orders }) {
   const [tab,st]=useState("students");
-  const [nu,snu]=useState({name:"",group:""});
-  const [edit,se]=useState(null);
-  const addU=async()=>{
-    if(!nu.name.trim()){notify("Le nom de l'élève est obligatoire","error");return;}
-    try{ await addStudent({name:nu.name.trim(),group:nu.group.trim()}); snu({name:"",group:""}); notify("Élève ajouté"); }
-    catch(e){ console.error(e); notify("Erreur : "+(e.message||e),"error"); }
-  };
-  const saveE=async()=>{
-    try{ await editStudent(edit.id,{name:edit.name,group:edit.group}); se(null); notify("Élève modifié"); }
-    catch(e){ console.error(e); notify("Erreur : "+(e.message||e),"error"); }
-  };
-  const delU=async(id)=>{
-    try{ await removeStudent(id); notify("Élève supprimé"); }
-    catch(e){ console.error(e); notify(isAdmin?"Erreur : "+(e.message||e):"Suppression réservée à l'administrateur","error"); }
-  };
   const stats=[
     {l:"Total interventions",v:orders.length,c:"#60a5fa"},{l:"En attente",v:orders.filter(o=>o.status==="en_attente").length,c:"#f59e0b"},
     {l:"En cours",v:orders.filter(o=>o.status==="en_cours").length,c:"#3b82f6"},{l:"Terminees",v:orders.filter(o=>o.status==="termine").length,c:"#34d399"},
     {l:"Clients",v:orders.filter(o=>o.vtype==="client").length,c:"#a78bfa"},{l:"Pedagogiques",v:orders.filter(o=>o.vtype==="peda").length,c:"#fb923c"},
     {l:"Signes",v:orders.filter(o=>o.signature).length,c:"#34d399"},{l:"Staff",v:staff.length,c:C.txt},{l:"Eleves",v:students.length,c:"#86efac"},
   ];
+  const accountNote="Les comptes (personnel et élèves « Étudiant Technicien ») sont créés dans le tableau de bord Supabase → Authentication → Users. Ajouter le rôle et le groupe dans User Metadata, ex. : { \"name\": \"Jean Martin\", \"role\": \"eleve\", \"grp\": \"G1-MV\" }. Cette liste est en lecture seule.";
   return (
     <div>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20,flexWrap:"wrap",gap:12}}>
@@ -881,46 +868,31 @@ function AdminPanel({ students, addStudent, editStudent, removeStudent, staff, o
         ))}
       </div>
       {tab==="students"&&(
-        <div style={{display:"flex",flexDirection:"column",gap:14}}>
-          <Crd>
-            <h3 style={{color:"#60a5fa",fontSize:14,fontWeight:700,marginBottom:12}}>Ajouter un élève</h3>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:12,marginBottom:12}}>
-              <Inp label="Nom complet *" value={nu.name} onChange={v=>snu(p=>({...p,name:v}))} placeholder="Jean Martin"/>
-              <Inp label="Groupe / Classe" value={nu.group} onChange={v=>snu(p=>({...p,group:v}))} placeholder="G1-MV"/>
-            </div>
-            <Btn sm onClick={addU}>+ Ajouter l'élève</Btn>
+        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          <Crd style={{background:"#0a1628"}}>
+            <p style={{color:C.sub,fontSize:13,margin:0}}>{accountNote}</p>
           </Crd>
-          <div style={{display:"flex",flexDirection:"column",gap:8}}>
-            {students.length===0&&<Crd><p style={{color:C.mut,textAlign:"center",margin:0}}>Aucun élève enregistré</p></Crd>}
-            {students.map(u=>(
-              <Crd key={u.id}>
-                <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
-                  <div style={{flex:1}}>
-                    <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-                      <span style={{color:C.txt,fontWeight:600}}>{u.name}</span>
-                      {u.group&&<span style={{fontSize:11,padding:"2px 8px",borderRadius:999,fontWeight:600,background:"#052e16",color:"#86efac"}}>{u.group}</span>}
-                    </div>
-                  </div>
-                  <div style={{display:"flex",gap:6}}>
-                    <Btn sm ghost onClick={()=>se({...u})}>Modifier</Btn>
-                    {isAdmin&&<Btn sm danger onClick={()=>delU(u.id)}>Supprimer</Btn>}
-                  </div>
-                </div>
-              </Crd>
-            ))}
-          </div>
+          {students.length===0&&<Crd><p style={{color:C.mut,textAlign:"center",margin:0}}>Aucun élève enregistré</p></Crd>}
+          {students.map(u=>(
+            <Crd key={u.id}>
+              <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+                <span style={{color:C.txt,fontWeight:600,flex:1}}>{u.name}</span>
+                {u.group&&<span style={{fontSize:11,padding:"2px 8px",borderRadius:999,fontWeight:600,background:"#052e16",color:"#86efac"}}>{u.group}</span>}
+              </div>
+            </Crd>
+          ))}
         </div>
       )}
       {tab==="staff"&&(
         <div style={{display:"flex",flexDirection:"column",gap:8}}>
           <Crd style={{background:"#0a1628"}}>
-            <p style={{color:C.sub,fontSize:13,margin:0}}>Les comptes du personnel (enseignants / administration) sont gérés dans le tableau de bord Supabase (Authentication → Users). Cette liste est en lecture seule.</p>
+            <p style={{color:C.sub,fontSize:13,margin:0}}>{accountNote}</p>
           </Crd>
           {staff.map(s=>{const rs=ROLE_STYLE[s.role]||{bg:"#1e293b",cl:C.sub};return(
             <Crd key={s.id}>
               <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
                 <span style={{color:C.txt,fontWeight:600,flex:1}}>{s.name}</span>
-                <span style={{fontSize:11,padding:"2px 8px",borderRadius:999,fontWeight:600,background:rs.bg,color:rs.cl}}>{s.role}</span>
+                <span style={{fontSize:11,padding:"2px 8px",borderRadius:999,fontWeight:600,background:rs.bg,color:rs.cl}}>{roleLabel(s.role)}</span>
               </div>
             </Crd>
           );})}
@@ -931,21 +903,6 @@ function AdminPanel({ students, addStudent, editStudent, removeStudent, staff, o
           {stats.map(s=><Crd key={s.l} style={{textAlign:"center"}}><div style={{fontSize:34,fontWeight:700,color:s.c}}>{s.v}</div><div style={{fontSize:12,color:C.sub,marginTop:4}}>{s.l}</div></Crd>)}
         </div>
       )}
-      {edit&&(
-        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.75)",zIndex:50,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
-          <div style={{background:C.card,borderRadius:16,padding:24,width:"100%",maxWidth:460,border:"1px solid "+C.bdr}}>
-            <h3 style={{color:C.txt,fontSize:16,fontWeight:700,marginBottom:16}}>Modifier l'élève</h3>
-            <div style={{display:"flex",flexDirection:"column",gap:12,marginBottom:16}}>
-              <Inp label="Nom complet" value={edit.name} onChange={v=>se(p=>({...p,name:v}))}/>
-              <Inp label="Groupe / Classe" value={edit.group} onChange={v=>se(p=>({...p,group:v}))}/>
-            </div>
-            <div style={{display:"flex",justifyContent:"flex-end",gap:10}}>
-              <Btn ghost onClick={()=>se(null)}>Annuler</Btn>
-              <Btn onClick={saveE}>Enregistrer</Btn>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -953,7 +910,7 @@ function AdminPanel({ students, addStudent, editStudent, removeStudent, staff, o
 export default function DMSApp() {
   const { user:cu, ready, recovery, clearRecovery } = useSession();
   const { orders, addOrder, editOrder } = useOrders();
-  const { students, addStudent, editStudent, removeStudent } = useStudents();
+  const { students } = useStudents();
   const [staff,setStaff]=useState([]);
   const [page,sp]=useState("dashboard");
   const [selId,ssi]=useState(null); const [sideOpen,sso]=useState(false);
@@ -966,7 +923,7 @@ export default function DMSApp() {
   if(!ready)return(<div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:C.bg,color:C.sub,fontFamily:"system-ui,sans-serif"}}>Chargement…</div>);
   if(recovery)return<ResetPasswordView notify={notify} onDone={async()=>{clearRecovery();await supabase.auth.signOut();}}/>;
   if(!cu)return<LoginView/>;
-  const isStaff=true; const isAdmin=cu.role==="admin";
+  const isStaff=true;
   const rs=ROLE_STYLE[cu.role]||{bg:"#1e293b",cl:C.sub};
   const renderPage=()=>{
     if(page==="dashboard")    return<Dashboard orders={orders} user={cu} nav={nav} selOrd={ssi}/>;
@@ -974,7 +931,7 @@ export default function DMSApp() {
     if(page==="new-order")    return isStaff?<NewOrderForm addOrder={addOrder} teachers={staff} students={students} user={cu} nav={nav} selOrd={ssi} notify={notify}/>:null;
     if(page==="order-detail") return selId?<OrderDetail orderId={selId} orders={orders} editOrder={editOrder} user={cu} nav={nav} notify={notify}/>:null;
     if(page==="history")      return<HistoryView orders={orders} nav={nav} selOrd={ssi}/>;
-    if(page==="admin")        return isStaff?<AdminPanel students={students} addStudent={addStudent} editStudent={editStudent} removeStudent={removeStudent} staff={staff} orders={orders} notify={notify} isAdmin={isAdmin}/>:null;
+    if(page==="admin")        return isStaff?<AdminPanel students={students} staff={staff} orders={orders}/>:null;
     return null;
   };
   return (
@@ -996,7 +953,7 @@ export default function DMSApp() {
           </div>
           <div style={{display:"flex",alignItems:"center",gap:8}}>
             {isDesktop&&<span style={{color:C.sub,fontSize:13}}>{cu.name}</span>}
-            <span style={{fontSize:11,padding:"3px 10px",borderRadius:999,fontWeight:600,background:rs.bg,color:rs.cl}}>{cu.role}</span>
+            <span style={{fontSize:11,padding:"3px 10px",borderRadius:999,fontWeight:600,background:rs.bg,color:rs.cl}}>{roleLabel(cu.role)}</span>
           </div>
         </header>
         <main style={{flex:1,padding:16,overflowY:"auto"}}>{renderPage()}</main>

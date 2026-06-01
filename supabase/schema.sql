@@ -8,19 +8,22 @@
 
 -- 1. TABLES -----------------------------------------------------------------
 
--- Profils du staff, liés 1-1 à auth.users
+-- Profils liés 1-1 à auth.users. role: admin | enseignant | eleve
+-- (les élèves « Étudiant Technicien » ont aussi un compte, avec droits réduits).
 create table if not exists profiles (
   id         uuid primary key references auth.users on delete cascade,
   name       text not null,
-  role       text not null default 'enseignant' check (role in ('admin','enseignant')),
+  role       text not null default 'enseignant' check (role in ('admin','enseignant','eleve')),
+  grp        text default '',          -- groupe / classe de l'élève (ex. G1-MV)
   created_at timestamptz default now()
 );
 
--- Élèves : fiches affectables aux ordres (aucun compte)
+-- (DÉPRÉCIÉ) Ancienne table de fiches élèves sans compte. Conservée pour
+-- compatibilité, mais l'app utilise désormais les profils (role='eleve').
 create table if not exists students (
   id         uuid primary key default gen_random_uuid(),
   name       text not null,
-  grp        text default '',          -- groupe / classe (ex. G1-MV)
+  grp        text default '',
   archived   boolean default false,
   created_at timestamptz default now()
 );
@@ -105,9 +108,15 @@ create trigger trg_orders_touch before update on orders
 create or replace function handle_new_user() returns trigger
   language plpgsql security definer set search_path = ''
 as $$
+declare r text := coalesce(new.raw_user_meta_data->>'role', 'enseignant');
 begin
-  insert into public.profiles(id, name, role)
-  values (new.id, coalesce(new.raw_user_meta_data->>'name', new.email), 'enseignant')
+  -- rôle lu depuis les metadata (name/role/grp) ; fallback sûr si valeur invalide
+  if r not in ('admin','enseignant','eleve') then r := 'enseignant'; end if;
+  insert into public.profiles(id, name, role, grp)
+  values (new.id,
+          coalesce(new.raw_user_meta_data->>'name', new.email),
+          r,
+          coalesce(new.raw_user_meta_data->>'grp', ''))
   on conflict (id) do nothing;
   return new;
 end;
@@ -122,6 +131,14 @@ create or replace function is_admin() returns boolean
   language sql security definer stable set search_path = ''
 as $$
   select exists(select 1 from public.profiles where id = auth.uid() and role = 'admin');
+$$;
+
+-- helper : l'utilisateur courant fait-il partie du staff (admin ou enseignant) ?
+-- Sert à empêcher les élèves de créer des OR / gérer des comptes.
+create or replace function is_staff() returns boolean
+  language sql security definer stable set search_path = ''
+as $$
+  select exists(select 1 from public.profiles where id = auth.uid() and role in ('admin','enseignant'));
 $$;
 
 -- 4. RLS ---------------------------------------------------------------------
@@ -145,7 +162,8 @@ drop policy if exists ins_orders   on orders;
 drop policy if exists upd_orders   on orders;
 create policy ins_students on students for insert with check (auth.role() = 'authenticated');
 create policy upd_students on students for update using (auth.role() = 'authenticated');
-create policy ins_orders   on orders   for insert with check (auth.role() = 'authenticated');
+-- création d'OR : staff uniquement (les élèves ne peuvent pas créer d'ordre)
+create policy ins_orders   on orders   for insert with check (is_staff());
 create policy upd_orders   on orders   for update using (auth.role() = 'authenticated');
 
 -- suppression + gestion des rôles : admin uniquement

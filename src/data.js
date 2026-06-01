@@ -46,7 +46,6 @@ function orderToRow(o) {
   return row;
 }
 
-const rowToStudent = (r) => ({ id: r.id, name: r.name, group: r.grp || "", archived: !!r.archived });
 
 // ── Ordres ─────────────────────────────────────────────────────────────────
 export async function listOrders() {
@@ -72,36 +71,19 @@ export async function deleteOrder(id) {
   if (error) throw error;
 }
 
-// ── Élèves ───────────────────────────────────────────────────────────────
+// ── Élèves = profils role='eleve' (comptes « Étudiant Technicien ») ─────────
+// Lecture seule côté app : les comptes sont créés dans le dashboard Supabase.
 export async function listStudents() {
   const { data, error } = await supabase
-    .from("students").select("*").eq("archived", false).order("name");
+    .from("profiles").select("id,name,grp").eq("role", "eleve").order("name");
   if (error) throw error;
-  return data.map(rowToStudent);
-}
-export async function insertStudent(s) {
-  const { data, error } = await supabase
-    .from("students").insert({ name: s.name, grp: s.group || "" }).select().single();
-  if (error) throw error;
-  return rowToStudent(data);
-}
-export async function updateStudent(id, patch) {
-  const row = {};
-  if (patch.name != null) row.name = patch.name;
-  if (patch.group != null) row.grp = patch.group;
-  const { data, error } = await supabase
-    .from("students").update(row).eq("id", id).select().single();
-  if (error) throw error;
-  return rowToStudent(data);
-}
-export async function deleteStudent(id) {
-  const { error } = await supabase.from("students").delete().eq("id", id);
-  if (error) throw error;
+  return data.map((p) => ({ id: p.id, name: p.name, group: p.grp || "" }));
 }
 
-// ── Staff (profils, lecture seule côté app) ─────────────────────────────────
+// ── Staff = profils admin/enseignant (lecture seule) ───────────────────────
 export async function listStaff() {
-  const { data, error } = await supabase.from("profiles").select("*").order("name");
+  const { data, error } = await supabase
+    .from("profiles").select("id,name,role").in("role", ["admin", "enseignant"]).order("name");
   if (error) throw error;
   return data.map((p) => ({ id: p.id, name: p.name, role: p.role }));
 }

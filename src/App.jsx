@@ -35,6 +35,8 @@ const ROLE_STYLE = {
 };
 const ROLE_LABEL = { admin:"Administrateur", enseignant:"Enseignant", eleve:"Étudiant Technicien" };
 const roleLabel = (r) => ROLE_LABEL[r] || r;
+// Classes des étudiants (BTS Maintenance des Véhicules)
+const CLASSES = ["STS 1 VL", "STS 2 VL", "STS 1 VTR", "STS 2 VTR"];
 
 const gid   = () => Date.now().toString(36) + Math.random().toString(36).slice(2,5);
 const today = () => new Date().toISOString().slice(0,10);
@@ -554,6 +556,43 @@ function OrdersList({ orders, user, nav, selOrd }) {
   );
 }
 
+// Sélection d'élèves regroupés par classe : un menu déroulant par classe, cases à cocher.
+function StudentPicker({ students, selected, onToggle }) {
+  const [open, setOpen] = useState({});
+  const groups = {};
+  (students || []).forEach(s => { const g = s.group || "Sans classe"; (groups[g] = groups[g] || []).push(s); });
+  const order = [...CLASSES.filter(c => groups[c]), ...Object.keys(groups).filter(g => !CLASSES.includes(g))];
+  if (order.length === 0) return <p style={{ color:C.mut, fontSize:13, margin:0 }}>Aucun élève. Crée des comptes dans Administration → 🎓 Élèves.</p>;
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+      {order.map(g => {
+        const list = groups[g];
+        const selCount = list.filter(s => selected.includes(s.name)).length;
+        const isOpen = !!open[g];
+        return (
+          <div key={g} style={{ border:"1px solid "+C.bdr, borderRadius:8, overflow:"hidden" }}>
+            <button type="button" onClick={() => setOpen(p => ({ ...p, [g]: !p[g] }))}
+              style={{ width:"100%", display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 12px", background:"#0a1628", border:"none", cursor:"pointer", color:C.txt, fontSize:13, fontWeight:600 }}>
+              <span>{isOpen ? "▾" : "▸"} {g}</span>
+              <span style={{ color: selCount ? "#34d399" : C.mut, fontSize:12 }}>{selCount}/{list.length} sélectionné{selCount>1?"s":""}</span>
+            </button>
+            {isOpen && (
+              <div style={{ padding:"6px 12px", display:"flex", flexDirection:"column", gap:2 }}>
+                {list.map(s => (
+                  <label key={s.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"5px 0", cursor:"pointer", color:C.txt, fontSize:13 }}>
+                    <input type="checkbox" checked={selected.includes(s.name)} onChange={() => onToggle(s.name)} />
+                    {s.name}
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function NewOrderForm({ addOrder, teachers, students, user, nav, selOrd, notify }) {
   const [busy,sbusy] = useState(false);
   const [f,sf] = useState({
@@ -626,13 +665,8 @@ function NewOrderForm({ addOrder, teachers, students, user, nav, selOrd, notify 
               <Sel label="Enseignant responsable" value={f.teacher} onChange={v=>set("teacher",v)} opts={[{v:"",l:"— Choisir —"},...teachers.map(t=>({v:t.name,l:t.name}))]}/>
             </div>
             <div style={{ marginTop:12 }}>
-              <label style={{ fontSize:12, color:C.sub, fontWeight:500, display:"block", marginBottom:8 }}>Eleves affectes</label>
-              <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
-                {students.map(st => {
-                  const sel=f.selStu.includes(st.name);
-                  return <button key={st.id} onClick={()=>togStu(st.name)} style={{ padding:"6px 12px", borderRadius:6, cursor:"pointer", fontSize:13, border:"1px solid "+(sel?"#2563eb":C.bdr), background:sel?C.acc:"transparent", color:sel?"#fff":C.sub }}>{st.name} <span style={{ fontSize:11, opacity:.7 }}>({st.group})</span></button>;
-                })}
-              </div>
+              <label style={{ fontSize:12, color:C.sub, fontWeight:500, display:"block", marginBottom:8 }}>Eleves affectes (par classe)</label>
+              <StudentPicker students={students} selected={f.selStu} onToggle={togStu}/>
             </div>
           </div>
         )}
@@ -742,18 +776,8 @@ function OrderDetail({ orderId, orders, editOrder, user, nav, notify, students }
             <h3 style={{color:"#60a5fa",fontSize:14,fontWeight:700,margin:0}}>🎓 Élèves affectés</h3>
             {o.assignedStudents.length>0&&<span style={{color:C.sub,fontSize:12}}>{o.assignedStudents.length} affecté(s)</span>}
           </div>
-          {(!students||students.length===0)?(
-            <p style={{color:C.mut,fontSize:13,margin:0}}>Aucun compte élève. Crée-les dans Administration → 🎓 Élèves, ils apparaîtront ici.</p>
-          ):(
-            <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
-              {students.map(stu=>{
-                const sel=o.assignedStudents.includes(stu.name);
-                return <button key={stu.id} onClick={()=>{const na=sel?o.assignedStudents.filter(n=>n!==stu.name):[...o.assignedStudents,stu.name];upd({assignedStudents:na});}}
-                  style={{padding:"6px 12px",borderRadius:6,cursor:"pointer",fontSize:13,border:"1px solid "+(sel?"#2563eb":C.bdr),background:sel?C.acc:"transparent",color:sel?"#fff":C.sub}}>
-                  {sel?"✓ ":""}{stu.name}{stu.group?<span style={{fontSize:11,opacity:.7}}> ({stu.group})</span>:null}</button>;
-              })}
-            </div>
-          )}
+          <StudentPicker students={students} selected={o.assignedStudents}
+            onToggle={(name)=>{const sel=o.assignedStudents.includes(name);const na=sel?o.assignedStudents.filter(n=>n!==name):[...o.assignedStudents,name];upd({assignedStudents:na});}}/>
         </Crd>
       )}
       <div style={{display:"flex",borderBottom:"1px solid "+C.bdr,marginBottom:14}}>
@@ -906,7 +930,7 @@ function HistoryView({ orders, nav, selOrd }) {
 
 function AdminPanel({ students, staff, orders, isAdmin, notify, reloadStudents, reloadStaff, currentId }) {
   const [tab,st]=useState("students");
-  const [nu,snu]=useState({name:"",group:"",password:""});
+  const [nu,snu]=useState({name:"",group:CLASSES[0],password:""});
   const [busy,sbusy]=useState(false);
   const [lastCreated,setLastCreated]=useState(null); // {identifier,password} à communiquer à l'élève
   const [nt,snt]=useState({identifier:"",name:"",password:""});
@@ -949,7 +973,7 @@ function AdminPanel({ students, staff, orders, isAdmin, notify, reloadStudents, 
     try{
       const r=await createStudent({name:nu.name.trim(),group:nu.group.trim(),password:nu.password});
       setLastCreated({identifier:r.identifier,password:nu.password});
-      snu({name:"",group:"",password:""});
+      snu({name:"",group:CLASSES[0],password:""});
       notify("Compte élève créé : "+r.identifier);
       reloadStudents();
     }catch(e){ console.error(e); notify("Erreur : "+(e.message||e),"error"); }
@@ -986,7 +1010,7 @@ function AdminPanel({ students, staff, orders, isAdmin, notify, reloadStudents, 
               <p style={{color:C.mut,fontSize:12,marginBottom:12}}>L'identifiant de connexion (« EtudiantN ») est généré automatiquement.</p>
               <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:12,marginBottom:12}}>
                 <Inp label="Nom complet *" value={nu.name} onChange={v=>snu(p=>({...p,name:v}))} placeholder="Jean Martin"/>
-                <Inp label="Groupe / Classe" value={nu.group} onChange={v=>snu(p=>({...p,group:v}))} placeholder="G1-MV"/>
+                <Sel label="Classe" value={nu.group} onChange={v=>snu(p=>({...p,group:v}))} opts={CLASSES.map(c=>({v:c,l:c}))}/>
                 <Inp label="Mot de passe *" value={nu.password} onChange={v=>snu(p=>({...p,password:v}))} type="password" placeholder="6 caractères min."/>
               </div>
               <Btn sm onClick={addStu} disabled={busy}>{busy?"Création…":"+ Créer le compte élève"}</Btn>

@@ -719,7 +719,6 @@ function OrderDetail({ orderId, orders, editOrder, user, nav, notify, students }
           {isStaff&&o.status!=="termine"&&(
             <>
               {o.status==="en_attente"&&<Btn sm onClick={()=>{upd({status:"en_cours"});notify("Intervention demarree");}}>▶ Demarrer</Btn>}
-              {o.status==="en_cours"&&<Btn sm onClick={()=>sse(true)} style={{background:"#065f46"}}>✅ Sortie vehicule</Btn>}
             </>
           )}
         </div>
@@ -819,7 +818,19 @@ function OrderDetail({ orderId, orders, editOrder, user, nav, notify, students }
           </div>
         </Crd>
       )}
-      {showExit&&<ExitModal o={o} onOk={d=>{upd({...d,status:"termine"});sse(false);st("exit");notify("Sortie du vehicule enregistree");archiveToDrive({...o,...d,status:"termine"},notify);}} onClose={()=>sse(false)}/>}
+      {isStaff&&(
+        <div style={{marginTop:20,paddingTop:16,borderTop:"1px solid "+C.bdr}}>
+          {o.status!=="termine"?(
+            <Btn full onClick={()=>sse(true)} style={{background:"#065f46",fontSize:15,padding:"12px"}}>✅ Valider et terminer l'OR</Btn>
+          ):(
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:10}}>
+              <span style={{color:"#34d399",fontSize:14,fontWeight:600}}>✅ Ordre terminé{o.exitDate?" le "+fD(o.exitDate):""} – archivé sur le Drive</span>
+              <Btn sm ghost onClick={()=>archiveToDrive(o,notify)} style={{borderColor:"#16a34a",color:"#34d399"}}>📁 Ré-archiver sur Drive</Btn>
+            </div>
+          )}
+        </div>
+      )}
+      {showExit&&<ExitModal o={o} onOk={d=>{upd({...d,status:"termine"});sse(false);st("exit");notify("Ordre terminé");archiveToDrive({...o,...d,status:"termine"},notify);}} onClose={()=>sse(false)}/>}
     </div>
   );
 }
@@ -830,8 +841,8 @@ function ExitModal({ o, onOk, onClose }) {
   return (
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.75)",zIndex:50,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
       <div style={{background:C.card,borderRadius:16,padding:24,width:"100%",maxWidth:480,border:"1px solid "+C.bdr}}>
-        <h3 style={{color:C.txt,fontSize:18,fontWeight:700,marginBottom:4}}>🚪 Sortie du vehicule</h3>
-        <p style={{color:C.sub,fontSize:14,marginBottom:16}}>{o.plate} – {o.brand} {o.model}</p>
+        <h3 style={{color:C.txt,fontSize:18,fontWeight:700,marginBottom:4}}>✅ Terminer l'ordre de réparation</h3>
+        <p style={{color:C.sub,fontSize:14,marginBottom:16}}>{o.plate} – {o.brand} {o.model} · l'OR sera marqué « terminé » et archivé sur le Drive.</p>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
           <Inp label="Date de sortie" value={f.exitDate} onChange={v=>set("exitDate",v)} type="date"/>
           <Inp label="Heure de sortie" value={f.exitTime} onChange={v=>set("exitTime",v)} type="time"/>
@@ -841,7 +852,7 @@ function ExitModal({ o, onOk, onClose }) {
         </div>
         <div style={{display:"flex",justifyContent:"flex-end",gap:10}}>
           <Btn ghost onClick={onClose}>Annuler</Btn>
-          <Btn onClick={()=>onOk(f)} style={{background:"#065f46"}}>✅ Valider la sortie</Btn>
+          <Btn onClick={()=>onOk(f)} style={{background:"#065f46"}}>✅ Valider et terminer</Btn>
         </div>
       </div>
     </div>

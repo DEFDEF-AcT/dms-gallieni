@@ -25,13 +25,13 @@ const VS = {
   termine:    { label: "Termine",    col: "#34D399" },
 };
 const C = {
-  bg:"#0f172a", card:"#1e293b", side:"#0d1f3c", hdr:"#162040",
-  acc:"#1d4ed8", bdr:"#2d4a7a", txt:"#e2e8f0", sub:"#94a3b8", mut:"#64748b"
+  bg:"#eff6ff", card:"#ffffff", side:"#dbeafe", hdr:"#e0f2fe",
+  acc:"#2563eb", bdr:"#bfdbfe", txt:"#102a43", sub:"#334155", mut:"#64748b"
 };
 const ROLE_STYLE = {
-  admin:      { bg:"#450a0a", cl:"#fca5a5" },
-  enseignant: { bg:"#172554", cl:"#93c5fd" },
-  eleve:      { bg:"#052e16", cl:"#86efac" },
+  admin:      { bg:"#fee2e2", cl:"#b91c1c" },
+  enseignant: { bg:"#dbeafe", cl:"#1d4ed8" },
+  eleve:      { bg:"#dcfce7", cl:"#15803d" },
 };
 const ROLE_LABEL = { admin:"Administrateur", enseignant:"Enseignant", eleve:"Étudiant Technicien" };
 const roleLabel = (r) => ROLE_LABEL[r] || r;
@@ -247,7 +247,7 @@ function Inp({ label, value, onChange, type, placeholder, readOnly, style: ex })
       {label && <label style={{ fontSize:12, color:C.sub, fontWeight:500 }}>{label}</label>}
       <input type={type||"text"} value={value} onChange={e => onChange&&onChange(e.target.value)}
         placeholder={placeholder} readOnly={readOnly}
-        style={{ background:"#0a1628", border:"1px solid "+C.bdr, borderRadius:6, padding:"8px 10px", color:readOnly?C.mut:C.txt, fontSize:13, outline:"none", ...(ex||{}) }}/>
+        style={{ background:"#f1f5f9", border:"1px solid "+C.bdr, borderRadius:6, padding:"8px 10px", color:readOnly?C.mut:C.txt, fontSize:13, outline:"none", ...(ex||{}) }}/>
     </div>
   );
 }
@@ -256,7 +256,7 @@ function Sel({ label, value, onChange, opts }) {
     <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
       {label && <label style={{ fontSize:12, color:C.sub, fontWeight:500 }}>{label}</label>}
       <select value={value} onChange={e => onChange(e.target.value)}
-        style={{ background:"#0a1628", border:"1px solid "+C.bdr, borderRadius:6, padding:"8px 10px", color:C.txt, fontSize:13, outline:"none" }}>
+        style={{ background:"#f1f5f9", border:"1px solid "+C.bdr, borderRadius:6, padding:"8px 10px", color:C.txt, fontSize:13, outline:"none" }}>
         {opts.map(o => <option key={o.v!=null?o.v:o} value={o.v!=null?o.v:o}>{o.l!=null?o.l:o}</option>)}
       </select>
     </div>
@@ -268,7 +268,7 @@ function TA({ label, value, onChange, onBlur, placeholder, rows, readOnly }) {
       {label && <label style={{ fontSize:12, color:C.sub, fontWeight:500 }}>{label}</label>}
       <textarea value={value} onChange={e => onChange&&onChange(e.target.value)} onBlur={onBlur||undefined} rows={rows||3}
         placeholder={placeholder} readOnly={readOnly}
-        style={{ background:"#0a1628", border:"1px solid "+C.bdr, borderRadius:6, padding:"8px 10px", color:C.txt, fontSize:13, outline:"none", resize:"vertical", fontFamily:"inherit" }}/>
+        style={{ background:"#f1f5f9", border:"1px solid "+C.bdr, borderRadius:6, padding:"8px 10px", color:C.txt, fontSize:13, outline:"none", resize:"vertical", fontFamily:"inherit" }}/>
     </div>
   );
 }
@@ -276,7 +276,7 @@ function Crd({ children, style: ex }) {
   return <div style={{ background:C.card, borderRadius:12, padding:16, border:"1px solid "+C.bdr, ...(ex||{}) }}>{children}</div>;
 }
 function SecTitle({ children }) {
-  return <h3 style={{ color:"#60a5fa", fontSize:13, fontWeight:700, margin:"16px 0 10px", paddingBottom:6, borderBottom:"1px solid "+C.bdr }}>{children}</h3>;
+  return <h3 style={{ color:"#2563eb", fontSize:13, fontWeight:700, margin:"16px 0 10px", paddingBottom:6, borderBottom:"1px solid "+C.bdr }}>{children}</h3>;
 }
 
 function SigPad({ onSave, init }) {
@@ -317,7 +317,7 @@ const APP_URL = window.location.origin + import.meta.env.BASE_URL;
 function AuthCard({ children }) {
   return (
     <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:C.bg, padding:16 }}>
-      <div style={{ background:C.card, borderRadius:16, padding:32, width:"100%", maxWidth:380, border:"1px solid "+C.bdr, boxShadow:"0 25px 60px rgba(0,0,0,.6)" }}>
+      <div style={{ background:C.card, borderRadius:16, padding:32, width:"100%", maxWidth:380, border:"1px solid "+C.bdr, boxShadow:"0 12px 40px rgba(37,99,235,.15)" }}>
         <div style={{ textAlign:"center", marginBottom:28 }}>
           <div style={{ fontSize:48, marginBottom:12 }}>🔧</div>
           <h1 style={{ color:C.txt, fontSize:22, fontWeight:700, margin:0 }}>DMS – Atelier BTS MV</h1>
@@ -354,9 +354,9 @@ function LoginView() {
         <p style={{ color:C.sub, fontSize:13, margin:0 }}>Saisis ton e-mail : tu recevras un lien pour définir un nouveau mot de passe.</p>
         <Inp label="E-mail" value={u} onChange={su} type="email" placeholder="prenom.nom@exemple.fr"/>
         {err && <p style={{ color:"#f87171", fontSize:13, textAlign:"center", margin:0 }}>{err}</p>}
-        {msg && <p style={{ color:"#34d399", fontSize:13, textAlign:"center", margin:0 }}>{msg}</p>}
+        {msg && <p style={{ color:"#059669", fontSize:13, textAlign:"center", margin:0 }}>{msg}</p>}
         <Btn full onClick={sendReset} disabled={busy}>{busy?"Envoi…":"Envoyer le lien"}</Btn>
-        <button onClick={()=>{setMode("login");se("");sm("");}} style={{ background:"none", border:"none", color:"#60a5fa", cursor:"pointer", fontSize:13 }}>← Retour à la connexion</button>
+        <button onClick={()=>{setMode("login");se("");sm("");}} style={{ background:"none", border:"none", color:"#2563eb", cursor:"pointer", fontSize:13 }}>← Retour à la connexion</button>
       </div>
     </AuthCard>
   );
@@ -367,9 +367,9 @@ function LoginView() {
         <Inp label="Mot de passe" value={p} onChange={sp} type="password" placeholder="••••••••"/>
         {err && <p style={{ color:"#f87171", fontSize:13, textAlign:"center", margin:0 }}>{err}</p>}
         <Btn full onClick={go} disabled={busy}>{busy?"Connexion…":"Se connecter"}</Btn>
-        <button onClick={()=>{setMode("forgot");se("");sm("");}} style={{ background:"none", border:"none", color:"#60a5fa", cursor:"pointer", fontSize:13 }}>Mot de passe oublié ? (staff)</button>
+        <button onClick={()=>{setMode("forgot");se("");sm("");}} style={{ background:"none", border:"none", color:"#2563eb", cursor:"pointer", fontSize:13 }}>Mot de passe oublié ? (staff)</button>
       </div>
-      <div style={{ marginTop:20, padding:12, background:"#0a1628", borderRadius:8, fontSize:12, color:C.mut, textAlign:"center" }}>
+      <div style={{ marginTop:20, padding:12, background:"#f1f5f9", borderRadius:8, fontSize:12, color:C.mut, textAlign:"center" }}>
         Staff : e-mail + mot de passe · Élèves : identifiant « EtudiantN » + mot de passe.
       </div>
     </AuthCard>
@@ -411,7 +411,7 @@ const NAV = [
 ];
 function Sidebar({ user, page, nav, logout }) {
   const isStaff = user.role !== "eleve";
-  const rs = ROLE_STYLE[user.role]||{ bg:"#1e293b", cl:C.sub };
+  const rs = ROLE_STYLE[user.role]||{ bg:"#e2e8f0", cl:C.sub };
   return (
     <div style={{ width:220, background:C.side, borderRight:"1px solid "+C.bdr, display:"flex", flexDirection:"column", height:"100vh", flexShrink:0 }}>
       <div style={{ padding:"20px 16px 16px", borderBottom:"1px solid "+C.bdr }}>
@@ -439,10 +439,10 @@ function Dashboard({ orders, user, nav, selOrd }) {
   const active = orders.filter(o => o.status !== "termine");
   const isStaff = user.role !== "eleve";
   const stats = [
-    { l:"En atelier",   v:active.length,                                              c:"#60a5fa" },
+    { l:"En atelier",   v:active.length,                                              c:"#2563eb" },
     { l:"En attente",   v:orders.filter(o=>o.status==="en_attente").length,            c:"#f59e0b" },
     { l:"En cours",     v:orders.filter(o=>o.status==="en_cours").length,              c:"#3b82f6" },
-    { l:"Termines",     v:orders.filter(o=>o.status==="termine").length,               c:"#34d399" },
+    { l:"Termines",     v:orders.filter(o=>o.status==="termine").length,               c:"#059669" },
     { l:"Clients",      v:active.filter(o=>o.vtype==="client").length,                 c:"#a78bfa" },
     { l:"Pedagogiques", v:active.filter(o=>o.vtype==="peda").length,                  c:"#fb923c" },
   ];
@@ -483,22 +483,22 @@ function OrdCard({ o, onClick }) {
         <Badge status={o.status}/>
       </div>
       <div style={{ display:"flex", gap:8, marginBottom:8, flexWrap:"wrap" }}>
-        <span style={{ fontSize:11, padding:"2px 8px", borderRadius:999, fontWeight:600, background:isPeda?"#431407":"#172554", color:isPeda?"#fdba74":"#93c5fd" }}>
+        <span style={{ fontSize:11, padding:"2px 8px", borderRadius:999, fontWeight:600, background:isPeda?"#ffedd5":"#dbeafe", color:isPeda?"#9a3412":"#1d4ed8" }}>
           {isPeda?"🎓 Pedagogique":"👤 Client"}
         </span>
         {o.km && <span style={{ fontSize:11, color:C.mut }}>📍 {Number(o.km).toLocaleString("fr-FR")} km</span>}
-        {o.signature && <span style={{ fontSize:11, color:"#34d399" }}>✍ Signe</span>}
+        {o.signature && <span style={{ fontSize:11, color:"#059669" }}>✍ Signe</span>}
       </div>
       {tot>0 && (
         <div>
           <div style={{ display:"flex", justifyContent:"space-between", fontSize:11, color:C.mut, marginBottom:3 }}><span>Avancement</span><span>{dn}/{tot}</span></div>
-          <div style={{ background:"#0f172a", borderRadius:999, height:6, overflow:"hidden" }}>
+          <div style={{ background:"#e2e8f0", borderRadius:999, height:6, overflow:"hidden" }}>
             <div style={{ width:Math.round(dn/tot*100)+"%", background:"#3b82f6", height:"100%", borderRadius:999 }}/>
           </div>
         </div>
       )}
       <div style={{ marginTop:8, fontSize:11, color:C.mut }}>Entree : {fD(o.entryDate)}</div>
-      {isPeda && o.students && <div style={{ marginTop:4, fontSize:11, color:"#fdba74" }}>👥 {o.students}</div>}
+      {isPeda && o.students && <div style={{ marginTop:4, fontSize:11, color:"#c2410c" }}>👥 {o.students}</div>}
     </div>
   );
 }
@@ -531,14 +531,14 @@ function OrdersList({ orders, user, nav, selOrd }) {
               return (
                 <div key={o.id} onClick={() => { selOrd(o.id); nav("order-detail"); }}
                   style={{ background:C.card, borderRadius:10, padding:"13px 16px", border:"1px solid "+C.bdr, cursor:"pointer", display:"flex", alignItems:"center", gap:12, flexWrap:"wrap" }}
-                  onMouseEnter={e => e.currentTarget.style.background="#1a3050"}
+                  onMouseEnter={e => e.currentTarget.style.background="#dbeafe"}
                   onMouseLeave={e => e.currentTarget.style.background=C.card}>
                   <div style={{ flex:1, minWidth:180 }}>
                     <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap", marginBottom:4 }}>
                       <span style={{ color:"#3b82f6", fontWeight:700, fontSize:12 }}>{o.orderNum}</span>
                       <Badge status={o.status}/>
-                      <span style={{ fontSize:11, color:isPeda?"#fdba74":"#93c5fd" }}>{isPeda?"🎓":"👤"}</span>
-                      {o.signature && <span style={{ fontSize:11, color:"#34d399" }}>✍</span>}
+                      <span style={{ fontSize:11, color:isPeda?"#c2410c":"#1d4ed8" }}>{isPeda?"🎓":"👤"}</span>
+                      {o.signature && <span style={{ fontSize:11, color:"#059669" }}>✍</span>}
                     </div>
                     <div style={{ color:C.txt, fontWeight:600 }}>{o.plate} – {o.brand} {o.model}</div>
                     <div style={{ color:C.sub, fontSize:12 }}>{isPeda?(o.teacher||"—"):(o.clientName||"—")}</div>
@@ -572,9 +572,9 @@ function StudentPicker({ students, selected, onToggle }) {
         return (
           <div key={g} style={{ border:"1px solid "+C.bdr, borderRadius:8, overflow:"hidden" }}>
             <button type="button" onClick={() => setOpen(p => ({ ...p, [g]: !p[g] }))}
-              style={{ width:"100%", display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 12px", background:"#0a1628", border:"none", cursor:"pointer", color:C.txt, fontSize:13, fontWeight:600 }}>
+              style={{ width:"100%", display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 12px", background:"#f1f5f9", border:"none", cursor:"pointer", color:C.txt, fontSize:13, fontWeight:600 }}>
               <span>{isOpen ? "▾" : "▸"} {g}</span>
-              <span style={{ color: selCount ? "#34d399" : C.mut, fontSize:12 }}>{selCount}/{list.length} sélectionné{selCount>1?"s":""}</span>
+              <span style={{ color: selCount ? "#059669" : C.mut, fontSize:12 }}>{selCount}/{list.length} sélectionné{selCount>1?"s":""}</span>
             </button>
             {isOpen && (
               <div style={{ padding:"6px 12px", display:"flex", flexDirection:"column", gap:2 }}>
@@ -675,7 +675,7 @@ function NewOrderForm({ addOrder, teachers, students, user, nav, selOrd, notify 
         <SecTitle>☑️ Travaux a realiser</SecTitle>
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(230px,1fr))", gap:8, marginBottom:10 }}>
           {f.tasks.map(t => (
-            <label key={t.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 10px", borderRadius:6, background:"#0a1628", border:"1px solid "+C.bdr, cursor:"pointer", fontSize:13, color:C.txt }}>
+            <label key={t.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 10px", borderRadius:6, background:"#f1f5f9", border:"1px solid "+C.bdr, cursor:"pointer", fontSize:13, color:C.txt }}>
               <input type="checkbox" checked={t.done} onChange={()=>set("tasks",f.tasks.map(x=>x.id===t.id?{...x,done:!x.done}:x))} style={{ flexShrink:0 }}/>
               <span style={{ flex:1 }}>{t.label}</span>
               <button onClick={e=>{e.preventDefault();set("tasks",f.tasks.filter(x=>x.id!==t.id));}} style={{ background:"none", border:"none", color:C.mut, cursor:"pointer", fontSize:16, padding:0, lineHeight:1 }}>×</button>
@@ -684,7 +684,7 @@ function NewOrderForm({ addOrder, teachers, students, user, nav, selOrd, notify 
         </div>
         <div style={{ display:"flex", gap:8 }}>
           <input value={f.custTask} onChange={e=>set("custTask",e.target.value)} onKeyDown={e=>{if(e.key==="Enter")addTask();}} placeholder="Ajouter une tache personnalisee..."
-            style={{ flex:1, background:"#0a1628", border:"1px solid "+C.bdr, borderRadius:6, padding:"8px 10px", color:C.txt, fontSize:13, outline:"none", fontFamily:"inherit" }}/>
+            style={{ flex:1, background:"#f1f5f9", border:"1px solid "+C.bdr, borderRadius:6, padding:"8px 10px", color:C.txt, fontSize:13, outline:"none", fontFamily:"inherit" }}/>
           <Btn sm onClick={addTask}>+ Ajouter</Btn>
         </div>
         <SecTitle>📝 Notes</SecTitle>
@@ -693,12 +693,12 @@ function NewOrderForm({ addOrder, teachers, students, user, nav, selOrd, notify 
           <TA label="Ventes additionnelles a prevoir" value={f.additionalSales} onChange={v=>set("additionalSales",v)} placeholder="Pieces, accessoires..."/>
         </div>
         <SecTitle>✍ Signature du client (accord pour les travaux)</SecTitle>
-        <div style={{ background:"#0a1628", borderRadius:10, padding:16, border:"1px solid "+C.bdr }}>
+        <div style={{ background:"#f1f5f9", borderRadius:10, padding:16, border:"1px solid "+C.bdr }}>
           <p style={{ color:C.sub, fontSize:12, marginBottom:12 }}>Le client certifie avoir pris connaissance des travaux a realiser et donne son accord.</p>
           {f.signature ? (
             <div>
               <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:8 }}>
-                <span style={{ color:"#34d399", fontSize:13, fontWeight:600 }}>✅ Signature enregistree</span>
+                <span style={{ color:"#059669", fontSize:13, fontWeight:600 }}>✅ Signature enregistree</span>
                 <Btn sm ghost onClick={()=>set("signature","")}>Resigner</Btn>
               </div>
               <img src={f.signature} alt="Signature" style={{ maxHeight:80, background:"#fff", borderRadius:6, padding:4, display:"block" }}/>
@@ -742,14 +742,14 @@ function OrderDetail({ orderId, orders, editOrder, user, nav, notify, students }
           <h2 style={{color:C.txt,fontSize:20,fontWeight:700,margin:0}}>{o.orderNum} – {o.plate}</h2>
           <div style={{display:"flex",gap:8,marginTop:6,flexWrap:"wrap",alignItems:"center"}}>
             <Badge status={o.status}/>
-            <span style={{fontSize:12,fontWeight:600,color:isPeda?"#fdba74":"#93c5fd"}}>{isPeda?"🎓 Pedagogique":"👤 Client"}</span>
+            <span style={{fontSize:12,fontWeight:600,color:isPeda?"#c2410c":"#1d4ed8"}}>{isPeda?"🎓 Pedagogique":"👤 Client"}</span>
             <span style={{fontSize:13,color:C.sub}}>{o.brand} {o.model} {o.year?"("+o.year+")":""}</span>
-            {o.signature&&<span style={{fontSize:12,color:"#34d399"}}>✍ Signe</span>}
+            {o.signature&&<span style={{fontSize:12,color:"#059669"}}>✍ Signe</span>}
           </div>
         </div>
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-          <Btn sm ghost onClick={()=>generatePDF(o)} style={{borderColor:"#3b82f6",color:"#60a5fa"}}>📄 PDF</Btn>
-          {isStaff&&<Btn sm ghost onClick={()=>archiveToDrive(o,notify)} style={{borderColor:"#16a34a",color:"#34d399"}}>📁 Archiver Drive</Btn>}
+          <Btn sm ghost onClick={()=>generatePDF(o)} style={{borderColor:"#3b82f6",color:"#2563eb"}}>📄 PDF</Btn>
+          {isStaff&&<Btn sm ghost onClick={()=>archiveToDrive(o,notify)} style={{borderColor:"#16a34a",color:"#059669"}}>📁 Archiver Drive</Btn>}
           {isStaff&&o.status!=="termine"&&(
             <>
               {o.status==="en_attente"&&<Btn sm onClick={()=>{upd({status:"en_cours"});notify("Intervention demarree");}}>▶ Demarrer</Btn>}
@@ -773,7 +773,7 @@ function OrderDetail({ orderId, orders, editOrder, user, nav, notify, students }
       {isStaff&&(
         <Crd style={{marginBottom:12}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8,marginBottom:10}}>
-            <h3 style={{color:"#60a5fa",fontSize:14,fontWeight:700,margin:0}}>🎓 Élèves affectés</h3>
+            <h3 style={{color:"#2563eb",fontSize:14,fontWeight:700,margin:0}}>🎓 Élèves affectés</h3>
             {o.assignedStudents.length>0&&<span style={{color:C.sub,fontSize:12}}>{o.assignedStudents.length} affecté(s)</span>}
           </div>
           <StudentPicker students={students} selected={o.assignedStudents}
@@ -782,31 +782,31 @@ function OrderDetail({ orderId, orders, editOrder, user, nav, notify, students }
       )}
       <div style={{display:"flex",borderBottom:"1px solid "+C.bdr,marginBottom:14}}>
         {TABS.map(t=>(
-          <button key={t.id} onClick={()=>st(t.id)} style={{padding:"10px 16px",border:"none",background:"transparent",cursor:"pointer",fontSize:13,fontWeight:tab===t.id?700:400,color:tab===t.id?"#60a5fa":C.sub,borderBottom:tab===t.id?"2px solid #3b82f6":"2px solid transparent",marginBottom:-1}}>{t.l}</button>
+          <button key={t.id} onClick={()=>st(t.id)} style={{padding:"10px 16px",border:"none",background:"transparent",cursor:"pointer",fontSize:13,fontWeight:tab===t.id?700:400,color:tab===t.id?"#2563eb":C.sub,borderBottom:tab===t.id?"2px solid #3b82f6":"2px solid transparent",marginBottom:-1}}>{t.l}</button>
         ))}
       </div>
       {tab==="tasks"&&(
         <div style={{display:"flex",flexDirection:"column",gap:10}}>
           <div style={{display:"flex",alignItems:"center",gap:12}}>
-            <div style={{flex:1,background:"#0a1628",borderRadius:999,height:8,overflow:"hidden"}}>
+            <div style={{flex:1,background:"#f1f5f9",borderRadius:999,height:8,overflow:"hidden"}}>
               <div style={{width:pct+"%",background:"#3b82f6",height:"100%",borderRadius:999,transition:"width .3s"}}/>
             </div>
             <span style={{color:C.sub,fontSize:13,whiteSpace:"nowrap"}}>{dn}/{tot} ({pct}%)</span>
           </div>
           {o.tasks&&o.tasks.map(t=>(
             <div key={t.id} onClick={()=>canEdit&&togTask(t.id)}
-              style={{display:"flex",alignItems:"center",gap:10,padding:"11px 14px",borderRadius:8,background:t.done?"#052e1644":"#0a1628",border:"1px solid "+(t.done?"#16a34a44":C.bdr),cursor:canEdit?"pointer":"default"}}>
+              style={{display:"flex",alignItems:"center",gap:10,padding:"11px 14px",borderRadius:8,background:t.done?"#dcfce7":"#f1f5f9",border:"1px solid "+(t.done?"#16a34a44":C.bdr),cursor:canEdit?"pointer":"default"}}>
               <div style={{width:20,height:20,borderRadius:4,flexShrink:0,background:t.done?"#16a34a":"transparent",border:"2px solid "+(t.done?"#16a34a":"#4b5563"),display:"flex",alignItems:"center",justifyContent:"center"}}>
                 {t.done&&<span style={{color:"#fff",fontSize:12,fontWeight:700}}>✓</span>}
               </div>
-              <span style={{flex:1,fontSize:14,color:t.done?"#86efac":C.txt,textDecoration:t.done?"line-through":"none"}}>{t.label}</span>
+              <span style={{flex:1,fontSize:14,color:t.done?"#15803d":C.txt,textDecoration:t.done?"line-through":"none"}}>{t.label}</span>
               {t.done&&t.doneBy&&<span style={{fontSize:11,color:C.mut,whiteSpace:"nowrap"}}>{t.doneBy} · {fD(t.doneAt)}</span>}
             </div>
           ))}
           {canEdit&&o.status!=="termine"&&(
             <div style={{display:"flex",gap:8,marginTop:4}}>
               <input value={newTask} onChange={e=>snt(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")addT();}} placeholder="Ajouter une tache..."
-                style={{flex:1,background:"#0a1628",border:"1px solid "+C.bdr,borderRadius:6,padding:"8px 10px",color:C.txt,fontSize:13,outline:"none",fontFamily:"inherit"}}/>
+                style={{flex:1,background:"#f1f5f9",border:"1px solid "+C.bdr,borderRadius:6,padding:"8px 10px",color:C.txt,fontSize:13,outline:"none",fontFamily:"inherit"}}/>
               <Btn sm onClick={addT}>+</Btn>
             </div>
           )}
@@ -820,11 +820,11 @@ function OrderDetail({ orderId, orders, editOrder, user, nav, notify, students }
       )}
       {tab==="sig"&&(
         <Crd>
-          <h3 style={{color:"#60a5fa",fontSize:15,fontWeight:700,marginBottom:4}}>✍ Accord du client pour les travaux</h3>
+          <h3 style={{color:"#2563eb",fontSize:15,fontWeight:700,marginBottom:4}}>✍ Accord du client pour les travaux</h3>
           <p style={{color:C.sub,fontSize:12,marginBottom:14}}>Signature recueillie lors de la creation de l'ordre de réparation.</p>
           {o.signature?(
             <div>
-              <div style={{color:"#34d399",fontSize:13,fontWeight:600,marginBottom:10}}>✅ Document signe</div>
+              <div style={{color:"#059669",fontSize:13,fontWeight:600,marginBottom:10}}>✅ Document signe</div>
               <img src={o.signature} alt="Signature client" style={{maxWidth:400,background:"#fff",borderRadius:8,padding:6,display:"block",border:"1px solid "+C.bdr}}/>
               <div style={{color:C.mut,fontSize:12,marginTop:8}}>Signataire : {isPeda?(o.teacher||"—"):(o.clientName||"—")}</div>
             </div>
@@ -835,7 +835,7 @@ function OrderDetail({ orderId, orders, editOrder, user, nav, notify, students }
       )}
       {tab==="exit"&&o.exitDate&&(
         <Crd>
-          <h3 style={{color:"#34d399",fontSize:15,fontWeight:700,marginBottom:12}}>🚪 Sortie enregistree</h3>
+          <h3 style={{color:"#059669",fontSize:15,fontWeight:700,marginBottom:12}}>🚪 Sortie enregistree</h3>
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:12,fontSize:13}}>
             <div><div style={{color:C.mut,fontSize:11}}>Date de sortie</div><div style={{color:C.txt}}>{fD(o.exitDate)} a {o.exitTime}</div></div>
             <div><div style={{color:C.mut,fontSize:11}}>Etat a la sortie</div><div style={{color:C.txt}}>{o.exitCondition||"—"}</div></div>
@@ -848,8 +848,8 @@ function OrderDetail({ orderId, orders, editOrder, user, nav, notify, students }
             <Btn full onClick={()=>sse(true)} style={{background:"#065f46",fontSize:15,padding:"12px"}}>✅ Valider et terminer l'OR</Btn>
           ):(
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:10}}>
-              <span style={{color:"#34d399",fontSize:14,fontWeight:600}}>✅ Ordre terminé{o.exitDate?" le "+fD(o.exitDate):""} – archivé sur le Drive</span>
-              <Btn sm ghost onClick={()=>archiveToDrive(o,notify)} style={{borderColor:"#16a34a",color:"#34d399"}}>📁 Ré-archiver sur Drive</Btn>
+              <span style={{color:"#059669",fontSize:14,fontWeight:600}}>✅ Ordre terminé{o.exitDate?" le "+fD(o.exitDate):""} – archivé sur le Drive</span>
+              <Btn sm ghost onClick={()=>archiveToDrive(o,notify)} style={{borderColor:"#16a34a",color:"#059669"}}>📁 Ré-archiver sur Drive</Btn>
             </div>
           )}
         </div>
@@ -903,14 +903,14 @@ function HistoryView({ orders, nav, selOrd }) {
             return(
               <div key={o.id} onClick={()=>{selOrd(o.id);nav("order-detail");}}
                 style={{background:C.card,borderRadius:10,padding:"13px 16px",border:"1px solid "+C.bdr,cursor:"pointer",display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}
-                onMouseEnter={e=>e.currentTarget.style.background="#1a3050"}
+                onMouseEnter={e=>e.currentTarget.style.background="#dbeafe"}
                 onMouseLeave={e=>e.currentTarget.style.background=C.card}>
                 <div style={{flex:1,minWidth:180}}>
                   <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginBottom:4}}>
                     <span style={{color:"#3b82f6",fontWeight:700,fontSize:12}}>{o.orderNum}</span>
                     <Badge status={o.status}/>
-                    <span style={{fontSize:11,color:isPeda?"#fdba74":"#93c5fd"}}>{isPeda?"🎓":"👤"}</span>
-                    {o.signature&&<span style={{fontSize:11,color:"#34d399"}}>✍</span>}
+                    <span style={{fontSize:11,color:isPeda?"#c2410c":"#1d4ed8"}}>{isPeda?"🎓":"👤"}</span>
+                    {o.signature&&<span style={{fontSize:11,color:"#059669"}}>✍</span>}
                   </div>
                   <div style={{color:C.txt,fontWeight:600}}>{o.plate} – {o.brand} {o.model}</div>
                   <div style={{color:C.sub,fontSize:12}}>{isPeda?(o.teacher||"—"):(o.clientName||"—")}</div>
@@ -961,10 +961,10 @@ function AdminPanel({ students, staff, orders, isAdmin, notify, reloadStudents, 
     catch(e){ console.error(e); notify("Erreur : "+(e.message||e),"error"); }
   };
   const stats=[
-    {l:"Total interventions",v:orders.length,c:"#60a5fa"},{l:"En attente",v:orders.filter(o=>o.status==="en_attente").length,c:"#f59e0b"},
-    {l:"En cours",v:orders.filter(o=>o.status==="en_cours").length,c:"#3b82f6"},{l:"Terminees",v:orders.filter(o=>o.status==="termine").length,c:"#34d399"},
+    {l:"Total interventions",v:orders.length,c:"#2563eb"},{l:"En attente",v:orders.filter(o=>o.status==="en_attente").length,c:"#f59e0b"},
+    {l:"En cours",v:orders.filter(o=>o.status==="en_cours").length,c:"#3b82f6"},{l:"Terminees",v:orders.filter(o=>o.status==="termine").length,c:"#059669"},
     {l:"Clients",v:orders.filter(o=>o.vtype==="client").length,c:"#a78bfa"},{l:"Pedagogiques",v:orders.filter(o=>o.vtype==="peda").length,c:"#fb923c"},
-    {l:"Signes",v:orders.filter(o=>o.signature).length,c:"#34d399"},{l:"Staff",v:staff.length,c:C.txt},{l:"Eleves",v:students.length,c:"#86efac"},
+    {l:"Signes",v:orders.filter(o=>o.signature).length,c:"#059669"},{l:"Staff",v:staff.length,c:C.txt},{l:"Eleves",v:students.length,c:"#15803d"},
   ];
   const addStu=async()=>{
     if(!nu.name.trim()){notify("Le nom de l'élève est obligatoire","error");return;}
@@ -1006,7 +1006,7 @@ function AdminPanel({ students, staff, orders, isAdmin, notify, reloadStudents, 
         <div style={{display:"flex",flexDirection:"column",gap:14}}>
           {isAdmin ? (
             <Crd>
-              <h3 style={{color:"#60a5fa",fontSize:14,fontWeight:700,marginBottom:12}}>Créer un compte élève</h3>
+              <h3 style={{color:"#2563eb",fontSize:14,fontWeight:700,marginBottom:12}}>Créer un compte élève</h3>
               <p style={{color:C.mut,fontSize:12,marginBottom:12}}>L'identifiant de connexion (« EtudiantN ») est généré automatiquement.</p>
               <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:12,marginBottom:12}}>
                 <Inp label="Nom complet *" value={nu.name} onChange={v=>snu(p=>({...p,name:v}))} placeholder="Jean Martin"/>
@@ -1015,14 +1015,14 @@ function AdminPanel({ students, staff, orders, isAdmin, notify, reloadStudents, 
               </div>
               <Btn sm onClick={addStu} disabled={busy}>{busy?"Création…":"+ Créer le compte élève"}</Btn>
               {lastCreated&&(
-                <div style={{marginTop:12,padding:12,background:"#052e16",border:"1px solid #16a34a55",borderRadius:8,fontSize:13,color:"#dcfce7"}}>
+                <div style={{marginTop:12,padding:12,background:"#dcfce7",border:"1px solid #15803d",borderRadius:8,fontSize:13,color:"#166534"}}>
                   ✅ Compte créé — à communiquer à l'élève :<br/>
                   Identifiant : <b>{lastCreated.identifier}</b> · Mot de passe : <b>{lastCreated.password}</b>
                 </div>
               )}
             </Crd>
           ) : (
-            <Crd style={{background:"#0a1628"}}>
+            <Crd style={{background:"#f1f5f9"}}>
               <p style={{color:C.sub,fontSize:13,margin:0}}>La gestion des comptes élèves est réservée à l'administrateur.</p>
             </Crd>
           )}
@@ -1032,7 +1032,7 @@ function AdminPanel({ students, staff, orders, isAdmin, notify, reloadStudents, 
               <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
                 <div style={{flex:1}}>
                   <span style={{color:C.txt,fontWeight:600}}>{u.name}</span>
-                  {u.group&&<span style={{marginLeft:8,fontSize:11,padding:"2px 8px",borderRadius:999,fontWeight:600,background:"#052e16",color:"#86efac"}}>{u.group}</span>}
+                  {u.group&&<span style={{marginLeft:8,fontSize:11,padding:"2px 8px",borderRadius:999,fontWeight:600,background:"#dcfce7",color:"#15803d"}}>{u.group}</span>}
                   {u.identifier&&<div style={{color:C.mut,fontSize:12,marginTop:2}}>🔑 {u.identifier}</div>}
                 </div>
                 {isAdmin&&(
@@ -1050,7 +1050,7 @@ function AdminPanel({ students, staff, orders, isAdmin, notify, reloadStudents, 
         <div style={{display:"flex",flexDirection:"column",gap:14}}>
           {isAdmin ? (
             <Crd>
-              <h3 style={{color:"#60a5fa",fontSize:14,fontWeight:700,marginBottom:12}}>Créer un compte enseignant</h3>
+              <h3 style={{color:"#2563eb",fontSize:14,fontWeight:700,marginBottom:12}}>Créer un compte enseignant</h3>
               <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:12,marginBottom:12}}>
                 <Inp label="Identifiant de connexion *" value={nt.identifier} onChange={v=>snt(p=>({...p,identifier:v}))} placeholder="jdupont"/>
                 <Inp label="Pseudo affiché *" value={nt.name} onChange={v=>snt(p=>({...p,name:v}))} placeholder="M. Dupont"/>
@@ -1058,17 +1058,17 @@ function AdminPanel({ students, staff, orders, isAdmin, notify, reloadStudents, 
               </div>
               <Btn sm onClick={addTeacher} disabled={tbusy}>{tbusy?"Création…":"+ Créer le compte enseignant"}</Btn>
               {lastT&&(
-                <div style={{marginTop:12,padding:12,background:"#052e16",border:"1px solid #16a34a55",borderRadius:8,fontSize:13,color:"#dcfce7"}}>
+                <div style={{marginTop:12,padding:12,background:"#dcfce7",border:"1px solid #15803d",borderRadius:8,fontSize:13,color:"#166534"}}>
                   ✅ Compte créé — identifiant : <b>{lastT.identifier}</b> · mot de passe : <b>{lastT.password}</b>
                 </div>
               )}
             </Crd>
           ) : (
-            <Crd style={{background:"#0a1628"}}>
+            <Crd style={{background:"#f1f5f9"}}>
               <p style={{color:C.sub,fontSize:13,margin:0}}>La gestion des comptes du personnel est réservée à l'administrateur.</p>
             </Crd>
           )}
-          {staff.map(s=>{const rs=ROLE_STYLE[s.role]||{bg:"#1e293b",cl:C.sub};const protege=s.role==="admin"||s.id===currentId;return(
+          {staff.map(s=>{const rs=ROLE_STYLE[s.role]||{bg:"#e2e8f0",cl:C.sub};const protege=s.role==="admin"||s.id===currentId;return(
             <Crd key={s.id}>
               <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
                 <div style={{flex:1}}>
@@ -1114,7 +1114,7 @@ export default function DMSApp() {
   if(recovery)return<ResetPasswordView notify={notify} onDone={async()=>{clearRecovery();await supabase.auth.signOut();}}/>;
   if(!cu)return<LoginView/>;
   const isStaff=true; const isAdmin=cu.role==="admin";
-  const rs=ROLE_STYLE[cu.role]||{bg:"#1e293b",cl:C.sub};
+  const rs=ROLE_STYLE[cu.role]||{bg:"#e2e8f0",cl:C.sub};
   const renderPage=()=>{
     if(page==="dashboard")    return<Dashboard orders={orders} user={cu} nav={nav} selOrd={ssi}/>;
     if(page==="orders")       return<OrdersList orders={orders} user={cu} nav={nav} selOrd={ssi}/>;
@@ -1148,7 +1148,7 @@ export default function DMSApp() {
         </header>
         <main style={{flex:1,padding:16,overflowY:"auto"}}>{renderPage()}</main>
       </div>
-      <style>{`*{box-sizing:border-box;margin:0;}input[type=checkbox]{cursor:pointer;width:16px;height:16px;}::-webkit-scrollbar{width:6px;}::-webkit-scrollbar-track{background:#0f172a;}::-webkit-scrollbar-thumb{background:#334155;border-radius:3px;}`}</style>
+      <style>{`*{box-sizing:border-box;margin:0;}input[type=checkbox]{cursor:pointer;width:16px;height:16px;}::-webkit-scrollbar{width:6px;}::-webkit-scrollbar-track{background:#e2e8f0;}::-webkit-scrollbar-thumb{background:#334155;border-radius:3px;}`}</style>
     </div>
   );
 }

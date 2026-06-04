@@ -56,7 +56,9 @@ const TASKS0 = [
 // ── Données Supabase (remplace localStorage) ──
 // Collection générique : fetch initial + abonnement realtime (refetch sur
 // changement) pour synchroniser tous les postes connectés.
-function useCollection(listFn, table) {
+// `dep` (ex. l'id de l'utilisateur connecté) : recharge dès qu'il change, pour
+// éviter un 1er chargement non authentifié (qui renvoie vide via RLS) au démarrage.
+function useCollection(listFn, table, dep) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const reload = useCallback(() => {
@@ -72,12 +74,12 @@ function useCollection(listFn, table) {
       .on("postgres_changes", { event: "*", schema: "public", table }, reload)
       .subscribe();
     return () => { supabase.removeChannel(ch); };
-  }, [reload, table]);
+  }, [reload, table, dep]);
   return { items, setItems, loading, reload };
 }
 
-function useOrders() {
-  const { items, loading, reload } = useCollection(listOrders, "orders");
+function useOrders(dep) {
+  const { items, loading, reload } = useCollection(listOrders, "orders", dep);
   const addOrder = useCallback(async (o) => { const r = await insertOrder(o); reload(); return r; }, [reload]);
   const editOrder = useCallback(async (id, patch) => { const r = await dbUpdateOrder(id, patch); reload(); return r; }, [reload]);
   const removeOrder = useCallback(async (id) => { await deleteOrder(id); reload(); }, [reload]);
@@ -85,8 +87,8 @@ function useOrders() {
 }
 
 // Élèves = profils role='eleve'. Gérés via l'Edge Function (admin) ; reload après mutation.
-function useStudents() {
-  const { items, loading, reload } = useCollection(listStudents, "profiles");
+function useStudents(dep) {
+  const { items, loading, reload } = useCollection(listStudents, "profiles", dep);
   return { students: items, loading, reloadStudents: reload };
 }
 
@@ -1098,8 +1100,8 @@ function AdminPanel({ students, staff, orders, isAdmin, notify, reloadStudents, 
 
 export default function DMSApp() {
   const { user:cu, ready, recovery, clearRecovery } = useSession();
-  const { orders, addOrder, editOrder } = useOrders();
-  const { students, reloadStudents } = useStudents();
+  const { orders, addOrder, editOrder } = useOrders(cu?.id);
+  const { students, reloadStudents } = useStudents(cu?.id);
   const [staff,setStaff]=useState([]);
   const [page,sp]=useState("dashboard");
   const [selId,ssi]=useState(null); const [sideOpen,sso]=useState(false);

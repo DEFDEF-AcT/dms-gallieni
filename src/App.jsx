@@ -1228,12 +1228,24 @@ function DocsList({ kind, documents, openDoc, newDoc }) {
   );
 }
 
-function DocForm({ kind, initial, orders, addDocument, editDocument, removeDocument, isAdmin, user, nav, notify }) {
+function DocForm({ kind, initial, orders, documents, addDocument, editDocument, removeDocument, isAdmin, user, nav, notify }) {
   const label=DOC_LABEL[kind];
   const back=()=>nav(kind==="estimate"?"estimates":"invoices");
   const [d,sd]=useState(()=> initial ? {...initial} : { kind, orderId:"", clientName:"", clientPhone:"", plate:"", brand:"", model:"", year:"", km:"", items:[], tvaRate:20, signature:"", notes:"", validUntil:"" });
   const [busy,sbusy]=useState(false);
+  const [srcEst,setSrcEst]=useState("");
   const isNew=!d.id;
+  const estimates=(documents||[]).filter(x=>x.kind==="estimate");
+  const fromEstimate=(eid)=>{ setSrcEst(eid); sd(p=>{
+    const e=estimates.find(x=>x.id===eid);
+    if(!e) return p;
+    return {...p, orderId:e.orderId||p.orderId||"",
+      clientName:e.clientName||"", clientPhone:e.clientPhone||"",
+      plate:e.plate||"", brand:e.brand||"", model:e.model||"",
+      year:e.year||"", km:e.km||"",
+      items:(e.items&&e.items.length)?e.items.map(it=>({...it})):p.items,
+      tvaRate:e.tvaRate??p.tvaRate, notes:e.notes||p.notes };
+  }); };
   const set=(k,v)=>sd(p=>({...p,[k]:v}));
   const linkOrder=(oid)=>sd(p=>{
     const o=orders.find(x=>x.id===oid);
@@ -1272,6 +1284,13 @@ function DocForm({ kind, initial, orders, addDocument, editDocument, removeDocum
         </div>
       </div>
       <Crd>
+        {kind==="invoice"&&estimates.length>0&&(
+          <div style={{marginBottom:8}}>
+            <SecTitle>📋 Reprendre une estimation (optionnel)</SecTitle>
+            <Sel label="Estimation source" value={srcEst} onChange={fromEstimate} opts={[{v:"",l:"— Aucune —"},...estimates.map(e=>({v:e.id,l:e.docNum+" · "+(e.clientName||e.plate||"")+" · "+eur(docTotals(e).ttc)}))]}/>
+            {srcEst&&<p style={{color:"#059669",fontSize:12,marginTop:6}}>✅ Données reprises de l'estimation (client, véhicule, lignes, TVA). Modifiables ci-dessous.</p>}
+          </div>
+        )}
         <SecTitle>🔗 Lier à un ordre de réparation (optionnel)</SecTitle>
         <Sel label="Ordre" value={d.orderId} onChange={linkOrder} opts={[{v:"",l:"— Aucun (saisie libre) —"},...orders.map(o=>({v:o.id,l:o.orderNum+" · "+(o.clientName||o.plate||"")}))]}/>
         <SecTitle>👤 Client</SecTitle>
@@ -1376,7 +1395,7 @@ export default function DMSApp() {
     if(page==="order-detail") return selId?<OrderDetail orderId={selId} orders={orders} editOrder={editOrder} user={cu} nav={nav} notify={notify} students={students}/>:null;
     if(page==="estimates")    return isStaff?<DocsList kind="estimate" documents={documents} openDoc={openDoc} newDoc={()=>newDoc("estimate")}/>:null;
     if(page==="invoices")     return isStaff?<DocsList kind="invoice" documents={documents} openDoc={openDoc} newDoc={()=>newDoc("invoice")}/>:null;
-    if(page==="doc-form")     return isStaff?<DocForm kind={docKind} initial={selDoc?documents.find(d=>d.id===selDoc):null} orders={orders} addDocument={addDocument} editDocument={editDocument} removeDocument={removeDocument} isAdmin={isAdmin} user={cu} nav={nav} notify={notify}/>:null;
+    if(page==="doc-form")     return isStaff?<DocForm kind={docKind} initial={selDoc?documents.find(d=>d.id===selDoc):null} orders={orders} documents={documents} addDocument={addDocument} editDocument={editDocument} removeDocument={removeDocument} isAdmin={isAdmin} user={cu} nav={nav} notify={notify}/>:null;
     if(page==="history")      return<HistoryView orders={orders} documents={documents} isStaff={cu.role!=="eleve"} nav={nav} selOrd={ssi} openDoc={openDoc}/>;
     if(page==="admin")        return isStaff?<AdminPanel students={students} staff={staff} orders={orders} isAdmin={isAdmin} notify={notify} reloadStudents={reloadStudents} reloadStaff={reloadStaff} currentId={cu.id}/>:null;
     return null;

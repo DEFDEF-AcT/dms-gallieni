@@ -5,7 +5,17 @@ import {
   listStudents, listStaff,
   createStudent, createTeacher, deleteAccount, resetPassword,
   archiveOrder,
+  listDocuments, insertDocument, updateDocument, deleteDocument,
 } from "./data";
+
+// Montants / TVA
+const eur = (n) => (Number(n) || 0).toLocaleString("fr-FR", { style: "currency", currency: "EUR" });
+function docTotals(doc) {
+  const ht = (doc.items || []).reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.unitPrice) || 0), 0);
+  const tva = ht * (Number(doc.tvaRate) || 0) / 100;
+  return { ht, tva, ttc: ht + tva };
+}
+const DOC_LABEL = { estimate: "Estimation", invoice: "Facture" };
 
 // Archive un OR en PDF sur le Drive (asynchrone, non bloquant).
 function archiveToDrive(order, notify) {
@@ -90,6 +100,14 @@ function useOrders(dep) {
 function useStudents(dep) {
   const { items, loading, reload } = useCollection(listStudents, "profiles", dep);
   return { students: items, loading, reloadStudents: reload };
+}
+
+function useDocuments(dep) {
+  const { items, loading, reload } = useCollection(listDocuments, "documents", dep);
+  const addDocument = useCallback(async (o) => { const r = await insertDocument(o); reload(); return r; }, [reload]);
+  const editDocument = useCallback(async (id, patch) => { const r = await updateDocument(id, patch); reload(); return r; }, [reload]);
+  const removeDocument = useCallback(async (id) => { await deleteDocument(id); reload(); }, [reload]);
+  return { documents: items, loading, addDocument, editDocument, removeDocument };
 }
 
 // Session : compte staff connecté → { id, name, role }.
@@ -226,6 +244,48 @@ function generatePDF(order) {
     if (w) { setTimeout(() => { try { w.print(); } catch { /* ignore */ } }, 800); }
     else { const a = document.createElement("a"); a.href = url; a.download = order.orderNum+".html"; a.click(); }
   } catch { alert("Impossible d'ouvrir la fenetre d'impression. Verifiez les popups."); }
+}
+
+// ── PDF Estimation / Facture ──
+function docHTML(doc) {
+  const isEst = doc.kind === "estimate";
+  const t = docTotals(doc);
+  const rows = (doc.items||[]).map((it,i)=>{
+    const lt=(Number(it.qty)||0)*(Number(it.unitPrice)||0);
+    return `<tr${i%2?' style="background:#f9f9f9"':''}><td>${esc(it.label||"")}</td><td class="r">${esc(String(it.qty??""))}</td><td class="r">${eur(it.unitPrice)}</td><td class="r">${eur(lt)}</td></tr>`;
+  }).join("") || `<tr><td colspan="4" style="color:#999">Aucune ligne</td></tr>`;
+  const sigBlock = isEst ? `<div class="sr">
+    <div><div class="sl">Bon pour accord — Signature du client</div><div class="sb">${doc.signature?`<img src="${doc.signature}" style="max-height:72px;max-width:100%;display:block;margin:auto;"/>`:`<div style="color:#bbb;line-height:80px;text-align:center;font-size:11px;">Non signee</div>`}</div><div class="sn">${esc(doc.clientName||"")}</div></div>
+    <div><div class="sl">Cachet / Visa atelier</div><div class="sb"></div></div></div>` : "";
+  const dateLine = isEst
+    ? (doc.validUntil?`<div class="om">Valable jusqu'au ${fD(doc.validUntil)}</div>`:"")
+    : (doc.validUntil?`<div class="om">Echeance : ${fD(doc.validUntil)}</div>`:"");
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(doc.docNum||"")}</title>
+<style>*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#111;background:#fff;}.page{padding:12mm 15mm;max-width:210mm;margin:0 auto;}.hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #1d4ed8;padding-bottom:10px;margin-bottom:14px;}.bn{font-size:20px;font-weight:bold;color:#1d4ed8;}.bs{font-size:10px;color:#555;margin-top:2px;}.on{font-size:22px;font-weight:bold;color:#1d4ed8;text-align:right;}.om{font-size:10px;color:#555;text-align:right;margin-top:2px;}.sec{margin-bottom:10px;}.sh{background:#1d4ed8;color:#fff;padding:4px 10px;font-size:11px;font-weight:bold;margin-bottom:6px;}.grid{display:grid;gap:6px 10px;}.g2{grid-template-columns:1fr 1fr;}.vl{font-size:13px;font-weight:bold;}table{width:100%;border-collapse:collapse;font-size:11px;margin-top:4px;}th{background:#1d4ed8;color:#fff;text-align:left;padding:5px 8px;font-size:10px;}td{padding:5px 8px;border-bottom:1px solid #eee;}td.r,th.r{text-align:right;}.tot{margin-top:10px;margin-left:auto;width:55%;}.tot div{display:flex;justify-content:space-between;padding:3px 8px;font-size:12px;}.tot .ttc{background:#1d4ed8;color:#fff;font-weight:bold;font-size:13px;border-radius:4px;}.tb{border:1px solid #ddd;padding:6px 8px;min-height:40px;font-size:11px;white-space:pre-wrap;}.sr{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:16px;padding-top:12px;border-top:2px solid #1d4ed8;}.sl{font-size:10px;color:#333;font-weight:bold;margin-bottom:5px;}.sb{border:1px solid #999;height:82px;background:#fafafa;overflow:hidden;}.sn{font-size:9px;color:#888;text-align:center;margin-top:3px;}.foot{margin-top:14px;padding-top:8px;border-top:1px solid #ddd;font-size:9px;color:#aaa;text-align:center;}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}</style>
+</head><body><div class="page">
+<div class="hdr"><div><div class="bn">Lycee Gallieni</div><div class="bs">Atelier BTS Maintenance des Vehicules</div><div class="bs" style="font-weight:bold;margin-top:5px;font-size:13px;">${isEst?"DEVIS / ESTIMATION":"FACTURE"}</div></div>
+<div><div class="on">${esc(doc.docNum||"")}</div><div class="om">Date : ${fD(doc.createdAt||today())}</div>${dateLine}<div class="om">Etabli par : ${esc(doc.createdBy||"—")}</div></div></div>
+<div class="grid g2">
+<div class="sec"><div class="sh">Client</div><div class="vl">${esc(doc.clientName||"—")}</div><div class="bs">${esc(doc.clientPhone||"")}</div></div>
+<div class="sec"><div class="sh">Vehicule</div><div class="vl">${esc(doc.plate||"—")}</div><div class="bs">${esc(doc.brand||"")} ${esc(doc.model||"")} ${doc.year?"("+esc(doc.year)+")":""} ${doc.km?"· "+esc(doc.km)+" km":""}</div></div></div>
+<div class="sec"><div class="sh">Detail des prestations</div>
+<table><thead><tr><th>Designation</th><th class="r">Qte</th><th class="r">PU HT</th><th class="r">Total HT</th></tr></thead><tbody>${rows}</tbody></table>
+<div class="tot"><div><span>Total HT</span><span>${eur(t.ht)}</span></div><div><span>TVA (${esc(String(doc.tvaRate??0))}%)</span><span>${eur(t.tva)}</span></div><div class="ttc"><span>Total TTC</span><span>${eur(t.ttc)}</span></div></div></div>
+${doc.notes?`<div class="sec"><div class="sh">Notes</div><div class="tb">${esc(doc.notes)}</div></div>`:""}
+${sigBlock}
+<div class="foot">Lycee Gallieni – BTS Maintenance des Vehicules &nbsp;|&nbsp; ${esc(doc.docNum||"")} &nbsp;|&nbsp; Imprime le ${new Date().toLocaleDateString("fr-FR")}</div>
+</div></body></html>`;
+}
+function generateDocPDF(doc){
+  const html=docHTML(doc);
+  try{ const blob=new Blob([html],{type:"text/html;charset=utf-8;"}); const url=URL.createObjectURL(blob); const w=window.open(url,"_blank");
+    if(w){setTimeout(()=>{try{w.print();}catch{/* ignore */}},800);} else {const a=document.createElement("a");a.href=url;a.download=(doc.docNum||"document")+".html";a.click();}
+  }catch{ alert("Impossible d'ouvrir l'impression. Verifiez les popups."); }
+}
+function archiveDocToDrive(doc,notify){
+  archiveOrder({ html:docHTML(doc), folder:(doc.clientName||"").trim()||"Client sans nom", orderNum:doc.docNum })
+    .then(()=>notify&&notify("Document archivé sur le Drive"))
+    .catch(e=>{console.error("[DMS] archive doc",e);notify&&notify("Archivage Drive non effectué : "+(e.message||e),"error");});
 }
 
 // ── UI primitives ──
@@ -408,6 +468,8 @@ function ResetPasswordView({ notify, onDone }) {
 const NAV = [
   { id:"dashboard", ico:"📊", lbl:"Tableau de bord" },
   { id:"orders",    ico:"🔧", lbl:"Ordres de réparation" },
+  { id:"estimates", ico:"🧾", lbl:"Estimations", staff:true },
+  { id:"invoices",  ico:"💶", lbl:"Factures", staff:true },
   { id:"history",   ico:"📋", lbl:"Historique" },
   { id:"admin",     ico:"⚙️", lbl:"Administration", staff:true },
 ];
@@ -885,28 +947,34 @@ function ExitModal({ o, onOk, onClose }) {
   );
 }
 
-function HistoryView({ orders, nav, selOrd }) {
+function HistoryView({ orders, documents, isStaff, nav, selOrd, openDoc }) {
+  const [tab,st]=useState("orders");
   const [q,sq]=useState("");
-  const shown=[...orders].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt))
-    .filter(o=>!q||[o.plate,o.brand,o.model,o.clientName,o.orderNum,o.students].join(" ").toLowerCase().includes(q.toLowerCase()));
+  const ql=q.toLowerCase();
+  const TABS=[["orders","🔧 Ordres"],...(isStaff?[["estimate","🧾 Estimations"],["invoice","💶 Factures"]]:[])];
+  const ords=[...orders].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt))
+    .filter(o=>!q||[o.plate,o.brand,o.model,o.clientName,o.orderNum,o.students].join(" ").toLowerCase().includes(ql));
+  const docs=(documents||[]).filter(d=>d.kind===tab).sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt))
+    .filter(d=>!q||[d.docNum,d.clientName,d.plate,d.brand,d.model].join(" ").toLowerCase().includes(ql));
   return (
     <div style={{display:"flex",flexDirection:"column",gap:16}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
-        <h2 style={{color:C.txt,fontSize:20,fontWeight:700,margin:0}}>📋 Historique ({orders.length} intervention{orders.length!==1?"s":""})</h2>
-        <Btn sm onClick={()=>csvExport(toCSV(orders),"DMS_Gallieni_"+today()+".csv")} style={{background:"#065f46"}}>⬇ Exporter CSV/Excel</Btn>
+        <h2 style={{color:C.txt,fontSize:20,fontWeight:700,margin:0}}>📋 Historique</h2>
+        {tab==="orders"&&<Btn sm onClick={()=>csvExport(toCSV(orders),"DMS_Gallieni_"+today()+".csv")} style={{background:"#065f46"}}>⬇ Exporter CSV/Excel</Btn>}
+      </div>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+        {TABS.map(([id,l])=><button key={id} onClick={()=>st(id)} style={{padding:"8px 16px",borderRadius:6,cursor:"pointer",fontSize:13,border:"1px solid "+(tab===id?"#2563eb":C.bdr),background:tab===id?C.acc:"transparent",color:tab===id?"#fff":C.sub}}>{l}</button>)}
       </div>
       <input value={q} onChange={e=>sq(e.target.value)} placeholder="🔍 Rechercher..."
         style={{background:C.card,border:"1px solid "+C.bdr,borderRadius:8,padding:"10px 14px",color:C.txt,fontSize:13,outline:"none"}}/>
-      {shown.length===0
-        ?<Crd><p style={{color:C.mut,textAlign:"center",margin:0}}>Aucune intervention enregistree</p></Crd>
-        :<div style={{display:"flex",flexDirection:"column",gap:8}}>
-          {shown.map(o=>{
-            const isPeda=o.vtype==="peda";
-            return(
+      {tab==="orders" ? (
+        ords.length===0
+          ?<Crd><p style={{color:C.mut,textAlign:"center",margin:0}}>Aucune intervention enregistree</p></Crd>
+          :<div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {ords.map(o=>{const isPeda=o.vtype==="peda";return(
               <div key={o.id} onClick={()=>{selOrd(o.id);nav("order-detail");}}
                 style={{background:C.card,borderRadius:10,padding:"13px 16px",border:"1px solid "+C.bdr,cursor:"pointer",display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}
-                onMouseEnter={e=>e.currentTarget.style.background="#dbeafe"}
-                onMouseLeave={e=>e.currentTarget.style.background=C.card}>
+                onMouseEnter={e=>e.currentTarget.style.background="#dbeafe"} onMouseLeave={e=>e.currentTarget.style.background=C.card}>
                 <div style={{flex:1,minWidth:180}}>
                   <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginBottom:4}}>
                     <span style={{color:"#3b82f6",fontWeight:700,fontSize:12}}>{o.orderNum}</span>
@@ -922,10 +990,32 @@ function HistoryView({ orders, nav, selOrd }) {
                   {o.exitDate&&<div>Sortie : {fD(o.exitDate)}</div>}
                 </div>
               </div>
-            );
-          })}
-        </div>
-      }
+            );})}
+          </div>
+      ) : (
+        docs.length===0
+          ?<Crd><p style={{color:C.mut,textAlign:"center",margin:0}}>Aucun document</p></Crd>
+          :<div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {docs.map(d=>{const t=docTotals(d);return(
+              <div key={d.id} onClick={()=>openDoc(d.id,d.kind)}
+                style={{background:C.card,borderRadius:10,padding:"13px 16px",border:"1px solid "+C.bdr,cursor:"pointer",display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}
+                onMouseEnter={e=>e.currentTarget.style.background="#dbeafe"} onMouseLeave={e=>e.currentTarget.style.background=C.card}>
+                <div style={{flex:1,minWidth:180}}>
+                  <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginBottom:4}}>
+                    <span style={{color:"#1d4ed8",fontWeight:700,fontSize:12}}>{d.docNum}</span>
+                    {d.kind==="estimate"&&(d.signature?<span style={{fontSize:11,color:"#059669"}}>✍ Signé</span>:<span style={{fontSize:11,color:"#c2410c"}}>Non signé</span>)}
+                  </div>
+                  <div style={{color:C.txt,fontWeight:600}}>{d.clientName||"—"}</div>
+                  <div style={{color:C.sub,fontSize:12}}>{d.plate} {d.brand} {d.model}</div>
+                </div>
+                <div style={{textAlign:"right"}}>
+                  <div style={{color:C.txt,fontWeight:700}}>{eur(t.ttc)}</div>
+                  <div style={{color:C.mut,fontSize:12}}>{fD(d.createdAt)}</div>
+                </div>
+              </div>
+            );})}
+          </div>
+      )}
     </div>
   );
 }
@@ -1098,13 +1188,175 @@ function AdminPanel({ students, staff, orders, isAdmin, notify, reloadStudents, 
   );
 }
 
+// ── Estimations / Factures ──
+function DocsList({ kind, documents, openDoc, newDoc }) {
+  const [q,sq]=useState("");
+  const label=DOC_LABEL[kind];
+  const list=documents.filter(d=>d.kind===kind)
+    .filter(d=>!q||[d.docNum,d.clientName,d.plate,d.brand,d.model].join(" ").toLowerCase().includes(q.toLowerCase()));
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:16}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
+        <h2 style={{color:C.txt,fontSize:20,fontWeight:700,margin:0}}>{kind==="estimate"?"🧾 Estimations":"💶 Factures"}</h2>
+        <Btn onClick={newDoc}>+ Nouvelle {label.toLowerCase()}</Btn>
+      </div>
+      <input value={q} onChange={e=>sq(e.target.value)} placeholder="🔍 N°, client, immatriculation..."
+        style={{background:C.card,border:"1px solid "+C.bdr,borderRadius:8,padding:"10px 14px",color:C.txt,fontSize:13,outline:"none"}}/>
+      {list.length===0
+        ?<Crd><p style={{color:C.mut,textAlign:"center",margin:0}}>Aucune {label.toLowerCase()}</p></Crd>
+        :<div style={{display:"flex",flexDirection:"column",gap:8}}>
+          {list.map(d=>{const t=docTotals(d);return(
+            <div key={d.id} onClick={()=>openDoc(d.id,kind)}
+              style={{background:C.card,borderRadius:10,padding:"13px 16px",border:"1px solid "+C.bdr,cursor:"pointer",display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}
+              onMouseEnter={e=>e.currentTarget.style.background="#dbeafe"} onMouseLeave={e=>e.currentTarget.style.background=C.card}>
+              <div style={{flex:1,minWidth:180}}>
+                <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginBottom:4}}>
+                  <span style={{color:"#1d4ed8",fontWeight:700,fontSize:12}}>{d.docNum}</span>
+                  {kind==="estimate"&&(d.signature?<span style={{fontSize:11,color:"#059669"}}>✍ Signé</span>:<span style={{fontSize:11,color:"#c2410c"}}>Non signé</span>)}
+                </div>
+                <div style={{color:C.txt,fontWeight:600}}>{d.clientName||"—"}</div>
+                <div style={{color:C.sub,fontSize:12}}>{d.plate} {d.brand} {d.model}</div>
+              </div>
+              <div style={{textAlign:"right"}}>
+                <div style={{color:C.txt,fontWeight:700}}>{eur(t.ttc)}</div>
+                <div style={{color:C.mut,fontSize:12}}>{fD(d.createdAt)}</div>
+              </div>
+            </div>
+          );})}
+        </div>}
+    </div>
+  );
+}
+
+function DocForm({ kind, initial, orders, addDocument, editDocument, removeDocument, isAdmin, user, nav, notify }) {
+  const label=DOC_LABEL[kind];
+  const back=()=>nav(kind==="estimate"?"estimates":"invoices");
+  const [d,sd]=useState(()=> initial ? {...initial} : { kind, orderId:"", clientName:"", clientPhone:"", plate:"", brand:"", model:"", year:"", km:"", items:[], tvaRate:20, signature:"", notes:"", validUntil:"" });
+  const [busy,sbusy]=useState(false);
+  const isNew=!d.id;
+  const set=(k,v)=>sd(p=>({...p,[k]:v}));
+  const linkOrder=(oid)=>sd(p=>{
+    const o=orders.find(x=>x.id===oid);
+    if(!o) return {...p,orderId:oid};
+    return {...p,orderId:oid,
+      clientName:p.clientName||o.clientName||"", clientPhone:p.clientPhone||o.clientPhone||"",
+      plate:p.plate||o.plate||"", brand:p.brand||o.brand||"", model:p.model||o.model||"",
+      year:p.year||o.year||"", km:p.km||o.km||"",
+      items:(p.items&&p.items.length)?p.items:(o.tasks||[]).map(tk=>({label:tk.label,qty:1,unitPrice:0})),
+    };
+  });
+  const addLine=()=>sd(p=>({...p,items:[...p.items,{label:"",qty:1,unitPrice:0}]}));
+  const setLine=(i,k,v)=>sd(p=>({...p,items:p.items.map((it,j)=>j===i?{...it,[k]:v}:it)}));
+  const delLine=(i)=>sd(p=>({...p,items:p.items.filter((_,j)=>j!==i)}));
+  const t=docTotals(d);
+  const save=async()=>{
+    if(!d.clientName.trim()){notify("Le nom du client est obligatoire","error");return;}
+    const clean={...d, tvaRate:Number(d.tvaRate)||0,
+      items:d.items.map(it=>({label:it.label||"",qty:Number(it.qty)||0,unitPrice:Number(it.unitPrice)||0}))};
+    sbusy(true);
+    try{
+      if(isNew){ const created=await addDocument({...clean,createdBy:user.name}); sd(created); notify(label+" créée : "+created.docNum); archiveDocToDrive(created,notify); }
+      else { const upd=await editDocument(d.id,clean); sd(upd); notify(label+" enregistrée"); }
+    }catch(e){ console.error(e); notify("Erreur : "+(e.message||e),"error"); }
+    finally{ sbusy(false); }
+  };
+  const del=async()=>{ if(!window.confirm("Supprimer "+(d.docNum||"ce document")+" ?"))return; try{ await removeDocument(d.id); notify("Supprimé"); back(); }catch(e){console.error(e);notify("Erreur : "+(e.message||e),"error");} };
+  return (
+    <div style={{maxWidth:900,margin:"0 auto"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20,flexWrap:"wrap",gap:12}}>
+        <h2 style={{color:C.txt,fontSize:20,fontWeight:700,margin:0}}>{kind==="estimate"?"🧾":"💶"} {isNew?"Nouvelle "+label.toLowerCase():d.docNum}</h2>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          {!isNew&&<Btn sm ghost onClick={()=>generateDocPDF(d)} style={{borderColor:"#1d4ed8",color:"#1d4ed8"}}>📄 PDF</Btn>}
+          {!isNew&&<Btn sm ghost onClick={()=>archiveDocToDrive(d,notify)} style={{borderColor:"#16a34a",color:"#059669"}}>📁 Drive</Btn>}
+          <Btn sm ghost onClick={back}>← Retour</Btn>
+        </div>
+      </div>
+      <Crd>
+        <SecTitle>🔗 Lier à un ordre de réparation (optionnel)</SecTitle>
+        <Sel label="Ordre" value={d.orderId} onChange={linkOrder} opts={[{v:"",l:"— Aucun (saisie libre) —"},...orders.map(o=>({v:o.id,l:o.orderNum+" · "+(o.clientName||o.plate||"")}))]}/>
+        <SecTitle>👤 Client</SecTitle>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:12}}>
+          <Inp label="Nom du client *" value={d.clientName} onChange={v=>set("clientName",v)} placeholder="M. Dupont"/>
+          <Inp label="Telephone" value={d.clientPhone} onChange={v=>set("clientPhone",v)} placeholder="06 12 34 56 78"/>
+        </div>
+        <SecTitle>🚗 Vehicule</SecTitle>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:12}}>
+          <Inp label="Immatriculation" value={d.plate} onChange={v=>set("plate",v)} placeholder="AB-123-CD"/>
+          <Inp label="Marque" value={d.brand} onChange={v=>set("brand",v)}/>
+          <Inp label="Modele" value={d.model} onChange={v=>set("model",v)}/>
+          <Inp label="Annee" value={d.year} onChange={v=>set("year",v)}/>
+          <Inp label="Km" value={d.km} onChange={v=>set("km",v)}/>
+        </div>
+        <SecTitle>📋 Lignes (prestations / pièces)</SecTitle>
+        <div style={{display:"flex",flexDirection:"column",gap:6}}>
+          <div style={{display:"flex",gap:8,fontSize:11,color:C.mut,fontWeight:600,padding:"0 4px"}}>
+            <span style={{flex:1}}>Désignation</span><span style={{width:60,textAlign:"right"}}>Qté</span><span style={{width:90,textAlign:"right"}}>PU HT</span><span style={{width:90,textAlign:"right"}}>Total</span><span style={{width:24}}/>
+          </div>
+          {d.items.map((it,i)=>{const lt=(Number(it.qty)||0)*(Number(it.unitPrice)||0);return(
+            <div key={i} style={{display:"flex",gap:8,alignItems:"center"}}>
+              <input value={it.label} onChange={e=>setLine(i,"label",e.target.value)} placeholder="Vidange, plaquettes..." style={{flex:1,background:"#f1f5f9",border:"1px solid "+C.bdr,borderRadius:6,padding:"7px 9px",color:C.txt,fontSize:13,outline:"none"}}/>
+              <input type="number" value={it.qty} onChange={e=>setLine(i,"qty",e.target.value)} style={{width:60,background:"#f1f5f9",border:"1px solid "+C.bdr,borderRadius:6,padding:"7px 6px",color:C.txt,fontSize:13,outline:"none",textAlign:"right"}}/>
+              <input type="number" value={it.unitPrice} onChange={e=>setLine(i,"unitPrice",e.target.value)} style={{width:90,background:"#f1f5f9",border:"1px solid "+C.bdr,borderRadius:6,padding:"7px 6px",color:C.txt,fontSize:13,outline:"none",textAlign:"right"}}/>
+              <span style={{width:90,textAlign:"right",fontSize:13,fontWeight:600,color:C.txt}}>{eur(lt)}</span>
+              <button onClick={()=>delLine(i)} style={{width:24,background:"none",border:"none",color:C.mut,cursor:"pointer",fontSize:18}}>×</button>
+            </div>
+          );})}
+          <div><Btn sm ghost onClick={addLine}>+ Ajouter une ligne</Btn></div>
+        </div>
+        <div style={{display:"flex",justifyContent:"flex-end",marginTop:14}}>
+          <div style={{width:280,display:"flex",flexDirection:"column",gap:6}}>
+            <div style={{display:"flex",justifyContent:"space-between",fontSize:13,color:C.sub}}><span>Total HT</span><b style={{color:C.txt}}>{eur(t.ht)}</b></div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:13,color:C.sub}}>
+              <span style={{display:"flex",alignItems:"center",gap:6}}>TVA <input type="number" value={d.tvaRate} onChange={e=>set("tvaRate",e.target.value)} style={{width:54,background:"#f1f5f9",border:"1px solid "+C.bdr,borderRadius:6,padding:"3px 6px",color:C.txt,fontSize:12,textAlign:"right"}}/>%</span>
+              <b style={{color:C.txt}}>{eur(t.tva)}</b>
+            </div>
+            <div style={{display:"flex",justifyContent:"space-between",fontSize:15,fontWeight:700,color:"#1d4ed8",borderTop:"2px solid "+C.bdr,paddingTop:6}}><span>Total TTC</span><span>{eur(t.ttc)}</span></div>
+          </div>
+        </div>
+        <SecTitle>📝 Notes & validité</SecTitle>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:12}}>
+          <TA label="Notes" value={d.notes} onChange={v=>set("notes",v)} placeholder="Conditions, remarques..." rows={3}/>
+          <Inp label={kind==="estimate"?"Valable jusqu'au":"Échéance de paiement"} value={d.validUntil} onChange={v=>set("validUntil",v)} type="date"/>
+        </div>
+        {kind==="estimate"&&(
+          <div>
+            <SecTitle>✍ Signature du client (bon pour accord)</SecTitle>
+            <div style={{background:"#f1f5f9",borderRadius:10,padding:16,border:"1px solid "+C.bdr}}>
+              {d.signature?(
+                <div>
+                  <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:8}}>
+                    <span style={{color:"#059669",fontSize:13,fontWeight:600}}>✅ Signée</span>
+                    <Btn sm ghost onClick={()=>set("signature","")}>Resigner</Btn>
+                  </div>
+                  <img src={d.signature} alt="Signature" style={{maxHeight:80,background:"#fff",borderRadius:6,padding:4,display:"block"}}/>
+                </div>
+              ):<SigPad onSave={v=>set("signature",v)}/>}
+            </div>
+          </div>
+        )}
+        <div style={{display:"flex",justifyContent:"space-between",gap:10,marginTop:20,paddingTop:16,borderTop:"1px solid "+C.bdr,flexWrap:"wrap"}}>
+          <div>{!isNew&&isAdmin&&<Btn ghost danger onClick={del}>Supprimer</Btn>}</div>
+          <div style={{display:"flex",gap:10}}>
+            <Btn ghost onClick={back}>Annuler</Btn>
+            <Btn onClick={save} disabled={busy}>{busy?"Enregistrement…":(isNew?"✅ Créer":"💾 Enregistrer")}</Btn>
+          </div>
+        </div>
+      </Crd>
+    </div>
+  );
+}
+
 export default function DMSApp() {
   const { user:cu, ready, recovery, clearRecovery } = useSession();
   const { orders, addOrder, editOrder } = useOrders(cu?.id);
   const { students, reloadStudents } = useStudents(cu?.id);
+  const { documents, addDocument, editDocument, removeDocument } = useDocuments(cu?.id);
   const [staff,setStaff]=useState([]);
   const [page,sp]=useState("dashboard");
   const [selId,ssi]=useState(null); const [sideOpen,sso]=useState(false);
+  const [selDoc,ssd]=useState(null); const [docKind,sdk]=useState("estimate");
+  const openDoc=(id,kind)=>{ ssd(id); sdk(kind); sp("doc-form"); sso(false); };
+  const newDoc=(kind)=>{ ssd(null); sdk(kind); sp("doc-form"); sso(false); };
   const [notif,sn]=useState(null);
   const isDesktop=useDesktop();
   const notify=useCallback((msg,type)=>{sn({msg,type:type||"success"});setTimeout(()=>sn(null),3500);},[]);
@@ -1115,14 +1367,17 @@ export default function DMSApp() {
   if(!ready)return(<div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:C.bg,color:C.sub,fontFamily:"system-ui,sans-serif"}}>Chargement…</div>);
   if(recovery)return<ResetPasswordView notify={notify} onDone={async()=>{clearRecovery();await supabase.auth.signOut();}}/>;
   if(!cu)return<LoginView/>;
-  const isStaff=true; const isAdmin=cu.role==="admin";
+  const isStaff=cu.role!=="eleve"; const isAdmin=cu.role==="admin";
   const rs=ROLE_STYLE[cu.role]||{bg:"#e2e8f0",cl:C.sub};
   const renderPage=()=>{
     if(page==="dashboard")    return<Dashboard orders={orders} user={cu} nav={nav} selOrd={ssi}/>;
     if(page==="orders")       return<OrdersList orders={orders} user={cu} nav={nav} selOrd={ssi}/>;
     if(page==="new-order")    return isStaff?<NewOrderForm addOrder={addOrder} teachers={staff} students={students} user={cu} nav={nav} selOrd={ssi} notify={notify}/>:null;
     if(page==="order-detail") return selId?<OrderDetail orderId={selId} orders={orders} editOrder={editOrder} user={cu} nav={nav} notify={notify} students={students}/>:null;
-    if(page==="history")      return<HistoryView orders={orders} nav={nav} selOrd={ssi}/>;
+    if(page==="estimates")    return isStaff?<DocsList kind="estimate" documents={documents} openDoc={openDoc} newDoc={()=>newDoc("estimate")}/>:null;
+    if(page==="invoices")     return isStaff?<DocsList kind="invoice" documents={documents} openDoc={openDoc} newDoc={()=>newDoc("invoice")}/>:null;
+    if(page==="doc-form")     return isStaff?<DocForm kind={docKind} initial={selDoc?documents.find(d=>d.id===selDoc):null} orders={orders} addDocument={addDocument} editDocument={editDocument} removeDocument={removeDocument} isAdmin={isAdmin} user={cu} nav={nav} notify={notify}/>:null;
+    if(page==="history")      return<HistoryView orders={orders} documents={documents} isStaff={cu.role!=="eleve"} nav={nav} selOrd={ssi} openDoc={openDoc}/>;
     if(page==="admin")        return isStaff?<AdminPanel students={students} staff={staff} orders={orders} isAdmin={isAdmin} notify={notify} reloadStudents={reloadStudents} reloadStaff={reloadStaff} currentId={cu.id}/>:null;
     return null;
   };

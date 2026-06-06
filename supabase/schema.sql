@@ -192,6 +192,67 @@ alter publication supabase_realtime add table orders;
 alter publication supabase_realtime add table students;
 
 -- ============================================================================
+-- DOCUMENTS : Estimations (devis) et Factures — réservés au STAFF
+-- ============================================================================
+create table if not exists documents (
+  id           uuid primary key default gen_random_uuid(),
+  kind         text not null check (kind in ('estimate','invoice')),
+  doc_num      text unique,                       -- EST-AAAA-XXXX / FA-AAAA-XXXX
+  order_id     uuid references orders(id) on delete set null,
+  client_name  text default '', client_phone text default '',
+  plate text default '', brand text default '', model text default '',
+  year text default '', km text default '',
+  items        jsonb default '[]'::jsonb,          -- [{label, qty, unitPrice}]
+  tva_rate     numeric default 20,
+  signature    text default '',                    -- accord client (estimations)
+  notes        text default '',
+  valid_until  date,                               -- validité (devis) / échéance (facture)
+  created_by   text default '',
+  created_at   timestamptz default now(),
+  updated_at   timestamptz default now()
+);
+
+-- Numérotation par type + année
+create table if not exists doc_counters (
+  kind text, year int, last int not null default 0,
+  primary key (kind, year)
+);
+create or replace function set_doc_num() returns trigger
+  language plpgsql security definer set search_path = ''
+as $$
+declare y int := extract(year from now())::int; n int; p text;
+begin
+  if new.doc_num is null then
+    p := case new.kind when 'estimate' then 'EST' when 'invoice' then 'FA' else 'DOC' end;
+    insert into public.doc_counters(kind, year, last) values (new.kind, y, 1)
+      on conflict (kind, year) do update set last = public.doc_counters.last + 1
+      returning last into n;
+    new.doc_num := p || '-' || y || '-' || lpad(n::text, 4, '0');
+  end if;
+  return new;
+end; $$;
+drop trigger if exists trg_doc_num on documents;
+create trigger trg_doc_num before insert on documents
+  for each row execute function set_doc_num();
+
+drop trigger if exists trg_documents_touch on documents;
+create trigger trg_documents_touch before update on documents
+  for each row execute function touch_updated_at();
+
+-- RLS : staff uniquement (les élèves n'y ont aucun accès)
+alter table documents enable row level security;
+drop policy if exists read_documents on documents;
+drop policy if exists ins_documents  on documents;
+drop policy if exists upd_documents  on documents;
+drop policy if exists del_documents  on documents;
+create policy read_documents on documents for select using (is_staff());
+create policy ins_documents  on documents for insert with check (is_staff());
+create policy upd_documents  on documents for update using (is_staff());
+create policy del_documents  on documents for delete using (is_admin());
+
+alter publication supabase_realtime add table documents;
+
+-- ============================================================================
 -- APRÈS EXÉCUTION :
 --  1) Authentication → Users → Add user : créer un compte staff (email + mdp).
 --     Renseigner le nom dans "User Metadata" : { "name": "M. Dupont" }

@@ -73,6 +73,51 @@ export async function deleteOrder(id) {
   if (error) throw error;
 }
 
+// ── Documents : Estimations (devis) & Factures (staff uniquement) ───────────
+export function rowToDoc(r) {
+  return {
+    id: r.id, kind: r.kind, docNum: r.doc_num, orderId: r.order_id || "",
+    clientName: r.client_name || "", clientPhone: r.client_phone || "",
+    plate: r.plate || "", brand: r.brand || "", model: r.model || "",
+    year: r.year || "", km: r.km || "",
+    items: Array.isArray(r.items) ? r.items : [],
+    tvaRate: r.tva_rate != null ? Number(r.tva_rate) : 20,
+    signature: r.signature || "", notes: r.notes || "",
+    validUntil: r.valid_until || "",
+    createdBy: r.created_by || "", createdAt: r.created_at,
+  };
+}
+function docToRow(o) {
+  const row = {};
+  for (const [k, v] of Object.entries(o)) {
+    if (["id", "docNum", "createdAt"].includes(k)) continue;
+    const col = camelToSnake(k);
+    if (col === "order_id") { row.order_id = v || null; continue; }
+    if (col === "valid_until") { row.valid_until = v || null; continue; }
+    row[col] = v;
+  }
+  return row;
+}
+export async function listDocuments() {
+  const { data, error } = await supabase.from("documents").select("*").order("created_at", { ascending: false });
+  if (error) throw error;
+  return data.map(rowToDoc);
+}
+export async function insertDocument(o) {
+  const { data, error } = await supabase.from("documents").insert(docToRow(o)).select().single();
+  if (error) throw error;
+  return rowToDoc(data);
+}
+export async function updateDocument(id, patch) {
+  const { data, error } = await supabase.from("documents").update(docToRow(patch)).eq("id", id).select().single();
+  if (error) throw error;
+  return rowToDoc(data);
+}
+export async function deleteDocument(id) {
+  const { error } = await supabase.from("documents").delete().eq("id", id);
+  if (error) throw error;
+}
+
 // ── Élèves = profils role='eleve' (comptes « Étudiant Technicien ») ─────────
 export async function listStudents() {
   const { data, error } = await supabase

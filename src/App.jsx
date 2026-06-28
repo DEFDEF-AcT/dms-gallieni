@@ -24,10 +24,13 @@ function archiveToDrive(order, notify) {
     .catch((e) => { console.error("[DMS] archivage Drive", e); notify && notify("Archivage Drive non effectué : " + (e.message || e), "error"); });
 }
 
-// Domaine interne des identifiants élèves (doit correspondre à l'Edge Function).
+// Domaine interne des identifiants (doit correspondre à l'Edge Function).
 const STUDENT_DOMAIN = "eleve.gallieni.local";
-// « Etudiant1 » → « etudiant1@eleve.gallieni.local » ; un email (avec @) est laissé tel quel.
-const toLoginEmail = (v) => v.includes("@") ? v.trim() : v.trim().toLowerCase() + "@" + STUDENT_DOMAIN;
+// Normalise un identifiant (nom complet) en partie locale d'email. DOIT être
+// identique au slugId() de l'Edge Function. « Jean Martin » → « jean.martin ».
+const slugId = (s) => String(s).normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, ".").replace(/^\.+|\.+$/g, "");
+// Un email (avec @) est laissé tel quel ; sinon on dérive depuis l'identifiant/nom.
+const toLoginEmail = (v) => v.includes("@") ? v.trim() : slugId(v) + "@" + STUDENT_DOMAIN;
 
 const VS = {
   en_attente: { label: "En attente", col: "#F59E0B" },
@@ -425,14 +428,14 @@ function LoginView() {
   return (
     <AuthCard>
       <div style={{ display:"flex", flexDirection:"column", gap:14 }} onKeyDown={e=>{if(e.key==="Enter"&&!busy)go();}}>
-        <Inp label="E-mail (staff) ou identifiant (élève)" value={u} onChange={su} placeholder="prenom.nom@… ou Etudiant1"/>
+        <Inp label="E-mail (staff) ou nom complet (élève)" value={u} onChange={su} placeholder="prenom.nom@… ou Jean Martin"/>
         <Inp label="Mot de passe" value={p} onChange={sp} type="password" placeholder="••••••••"/>
         {err && <p style={{ color:"#f87171", fontSize:13, textAlign:"center", margin:0 }}>{err}</p>}
         <Btn full onClick={go} disabled={busy}>{busy?"Connexion…":"Se connecter"}</Btn>
         <button onClick={()=>{setMode("forgot");se("");sm("");}} style={{ background:"none", border:"none", color:"#2563eb", cursor:"pointer", fontSize:13 }}>Mot de passe oublié ? (staff)</button>
       </div>
       <div style={{ marginTop:20, padding:12, background:"#f1f5f9", borderRadius:8, fontSize:12, color:C.mut, textAlign:"center" }}>
-        Staff : e-mail + mot de passe · Élèves : identifiant « EtudiantN » + mot de passe.
+        Staff : e-mail + mot de passe · Élèves : nom complet + mot de passe.
       </div>
     </AuthCard>
   );
@@ -1104,7 +1107,7 @@ function AdminPanel({ students, staff, orders, isAdmin, notify, reloadStudents, 
           {isAdmin ? (
             <Crd>
               <h3 style={{color:"#2563eb",fontSize:14,fontWeight:700,marginBottom:12}}>Créer un compte élève</h3>
-              <p style={{color:C.mut,fontSize:12,marginBottom:12}}>L'identifiant de connexion (« EtudiantN ») est généré automatiquement.</p>
+              <p style={{color:C.mut,fontSize:12,marginBottom:12}}>L'identifiant de connexion de l'élève est son <b>nom complet</b> (il se connectera en tapant son nom + le mot de passe). Deux élèves ne peuvent pas avoir le même nom.</p>
               <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:12,marginBottom:12}}>
                 <Inp label="Nom complet *" value={nu.name} onChange={v=>snu(p=>({...p,name:v}))} placeholder="Jean Martin"/>
                 <Sel label="Classe" value={nu.group} onChange={v=>snu(p=>({...p,group:v}))} opts={CLASSES.map(c=>({v:c,l:c}))}/>

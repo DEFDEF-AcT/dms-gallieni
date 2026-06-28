@@ -8,8 +8,15 @@
 // automatiquement par Supabase.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-// Domaine interne des emails synthétiques (l'élève ne le voit jamais ; il tape « Etudiant1 »).
+// Domaine interne des emails synthétiques (l'utilisateur ne le voit jamais ; il tape son identifiant).
 const DOMAIN = "eleve.gallieni.local";
+
+// Normalise un identifiant (ex. un nom complet) en partie locale d'email valide.
+// « Jean Martin » → « jean.martin ». DOIT être identique à slugId() côté frontend.
+function slugId(s: string): string {
+  return String(s).normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .toLowerCase().replace(/[^a-z0-9]+/g, ".").replace(/^\.+|\.+$/g, "");
+}
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -42,21 +49,20 @@ Deno.serve(async (req) => {
     if (action === "create") {
       if (!name || !password) return json({ ok: false, error: "Nom et mot de passe requis" });
       if (String(password).length < 6) return json({ ok: false, error: "Mot de passe : 6 caractères minimum" });
-      // Identifiant auto « EtudiantN »
-      const { data: existing } = await admin.from("profiles").select("identifier").eq("role", "eleve");
-      let max = 0;
-      for (const r of existing ?? []) {
-        const m = /^Etudiant(\d+)$/i.exec(r.identifier ?? "");
-        if (m) max = Math.max(max, parseInt(m[1], 10));
-      }
-      const identifier = "Etudiant" + (max + 1);
-      const email = `${identifier.toLowerCase()}@${DOMAIN}`;
+      // L'identifiant de connexion de l'élève EST son nom complet.
+      const ident = String(name).trim();
+      const local = slugId(ident);
+      if (!local) return json({ ok: false, error: "Nom invalide" });
+      // unicité (insensible à la casse) — deux élèves de même nom impossibles
+      const { data: clash } = await admin.from("profiles").select("id").ilike("identifier", ident);
+      if (clash && clash.length) return json({ ok: false, error: "Un élève portant ce nom existe déjà" });
+      const email = `${local}@${DOMAIN}`;
       const { data: created, error: cErr } = await admin.auth.admin.createUser({
         email, password, email_confirm: true,
-        user_metadata: { name, role: "eleve", grp: grp ?? "", identifier },
+        user_metadata: { name: ident, role: "eleve", grp: grp ?? "", identifier: ident },
       });
-      if (cErr) return json({ ok: false, error: cErr.message });
-      return json({ ok: true, identifier, id: created.user.id, name, grp: grp ?? "" });
+      if (cErr) return json({ ok: false, error: "Création impossible (nom déjà utilisé ?) : " + cErr.message });
+      return json({ ok: true, identifier: ident, id: created.user.id, name: ident, grp: grp ?? "" });
     }
 
     if (action === "create_teacher") {
@@ -67,7 +73,7 @@ Deno.serve(async (req) => {
       // unicité de l'identifiant (insensible à la casse)
       const { data: clash } = await admin.from("profiles").select("id").ilike("identifier", ident);
       if (clash && clash.length) return json({ ok: false, error: "Identifiant déjà utilisé" });
-      const email = `${ident.toLowerCase()}@${DOMAIN}`;
+      const email = `${slugId(ident)}@${DOMAIN}`;
       const { data: created, error: cErr } = await admin.auth.admin.createUser({
         email, password, email_confirm: true,
         user_metadata: { name, role: "enseignant", identifier: ident },

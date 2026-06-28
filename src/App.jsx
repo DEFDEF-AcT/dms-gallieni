@@ -780,7 +780,7 @@ function NewOrderForm({ addOrder, teachers, students, user, nav, selOrd, notify 
   );
 }
 
-function OrderDetail({ orderId, orders, editOrder, user, nav, notify, students }) {
+function OrderDetail({ orderId, orders, editOrder, removeOrder, isAdmin, user, nav, notify, students }) {
   const [tab,st]=useState("tasks"); const [showExit,sse]=useState(false); const [newTask,snt]=useState("");
   const o=orders.find(x=>x.id===orderId);
   const [obs,setObs]=useState(o?o.observations||"":""); const [adds,setAdds]=useState(o?o.additionalSales||"":"");
@@ -914,6 +914,11 @@ function OrderDetail({ orderId, orders, editOrder, user, nav, notify, students }
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:10}}>
               <span style={{color:"#059669",fontSize:14,fontWeight:600}}>✅ Ordre terminé{o.exitDate?" le "+fD(o.exitDate):""} – archivé sur le Drive</span>
               <Btn sm ghost onClick={()=>archiveToDrive(o,notify)} style={{borderColor:"#16a34a",color:"#059669"}}>📁 Ré-archiver sur Drive</Btn>
+            </div>
+          )}
+          {isAdmin&&(
+            <div style={{marginTop:14,paddingTop:12,borderTop:"1px dashed "+C.bdr,display:"flex",justifyContent:"flex-end"}}>
+              <Btn sm ghost danger onClick={async()=>{ if(!window.confirm("Supprimer définitivement l'ordre "+o.orderNum+" ?\nAction irréversible (le PDF déjà archivé sur le Drive n'est pas supprimé)."))return; try{ await removeOrder(orderId); notify("Ordre supprimé"); nav("orders"); }catch(e){ console.error(e); notify("Erreur : "+(e.message||e),"error"); } }}>🗑 Supprimer l'ordre</Btn>
             </div>
           )}
         </div>
@@ -1367,7 +1372,7 @@ function DocForm({ kind, initial, orders, documents, addDocument, editDocument, 
 
 export default function DMSApp() {
   const { user:cu, ready, recovery, clearRecovery } = useSession();
-  const { orders, addOrder, editOrder } = useOrders(cu?.id);
+  const { orders, addOrder, editOrder, removeOrder } = useOrders(cu?.id);
   const { students, reloadStudents } = useStudents(cu?.id);
   const { documents, addDocument, editDocument, removeDocument } = useDocuments(cu?.id);
   const [staff,setStaff]=useState([]);
@@ -1392,7 +1397,7 @@ export default function DMSApp() {
     if(page==="dashboard")    return<Dashboard orders={orders} user={cu} nav={nav} selOrd={ssi}/>;
     if(page==="orders")       return<OrdersList orders={orders} user={cu} nav={nav} selOrd={ssi}/>;
     if(page==="new-order")    return isStaff?<NewOrderForm addOrder={addOrder} teachers={staff} students={students} user={cu} nav={nav} selOrd={ssi} notify={notify}/>:null;
-    if(page==="order-detail") return selId?<OrderDetail orderId={selId} orders={orders} editOrder={editOrder} user={cu} nav={nav} notify={notify} students={students}/>:null;
+    if(page==="order-detail") return selId?<OrderDetail orderId={selId} orders={orders} editOrder={editOrder} removeOrder={removeOrder} isAdmin={isAdmin} user={cu} nav={nav} notify={notify} students={students}/>:null;
     if(page==="estimates")    return isStaff?<DocsList kind="estimate" documents={documents} openDoc={openDoc} newDoc={()=>newDoc("estimate")}/>:null;
     if(page==="invoices")     return isStaff?<DocsList kind="invoice" documents={documents} openDoc={openDoc} newDoc={()=>newDoc("invoice")}/>:null;
     if(page==="doc-form")     return isStaff?<DocForm kind={docKind} initial={selDoc?documents.find(d=>d.id===selDoc):null} orders={orders} documents={documents} addDocument={addDocument} editDocument={editDocument} removeDocument={removeDocument} isAdmin={isAdmin} user={cu} nav={nav} notify={notify}/>:null;

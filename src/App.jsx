@@ -28,7 +28,7 @@ function archiveToDrive(order, notify) {
 const STUDENT_DOMAIN = "eleve.gallieni.local";
 // Normalise un identifiant (nom complet) en partie locale d'email. DOIT être
 // identique au slugId() de l'Edge Function. « Jean Martin » → « jean.martin ».
-const slugId = (s) => String(s).normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, ".").replace(/^\.+|\.+$/g, "");
+const slugId = (s) => String(s).normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase().replace(/[^a-z0-9]+/g, ".").replace(/^\.+|\.+$/g, "");
 // Un email (avec @) est laissé tel quel ; sinon on dérive depuis l'identifiant/nom.
 const toLoginEmail = (v) => v.includes("@") ? v.trim() : slugId(v) + "@" + STUDENT_DOMAIN;
 

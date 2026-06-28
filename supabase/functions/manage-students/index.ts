@@ -14,7 +14,7 @@ const DOMAIN = "eleve.gallieni.local";
 // Normalise un identifiant (ex. un nom complet) en partie locale d'email valide.
 // « Jean Martin » → « jean.martin ». DOIT être identique à slugId() côté frontend.
 function slugId(s: string): string {
-  return String(s).normalize("NFD").replace(/[̀-ͯ]/g, "")
+  return String(s).normalize("NFD").replace(/\p{Diacritic}/gu, "")
     .toLowerCase().replace(/[^a-z0-9]+/g, ".").replace(/^\.+|\.+$/g, "");
 }
 

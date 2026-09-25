@@ -15,7 +15,8 @@ create table if not exists profiles (
   name       text not null,
   role       text not null default 'enseignant' check (role in ('admin','enseignant','eleve')),
   grp        text default '',          -- groupe / classe de l'élève (ex. G1-MV)
-  identifier text,                     -- identifiant de connexion élève (ex. « Etudiant1 »)
+  identifier text,                     -- identifiant de connexion élève (= son nom complet)
+  created_by uuid references profiles(id) on delete set null,  -- qui a créé ce compte (élève)
   created_at timestamptz default now()
 );
 

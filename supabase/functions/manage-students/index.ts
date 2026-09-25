@@ -39,10 +39,18 @@ Deno.serve(async (req) => {
     const { data: { user }, error: uErr } = await asUser.auth.getUser();
     if (uErr || !user) return json({ ok: false, error: "Non authentifié" });
 
-    // 2) Vérifier qu'il est admin (via service role)
+    // 2) Vérifier le rôle de l'appelant (via service role)
     const admin = createClient(url, serviceKey);
     const { data: prof } = await admin.from("profiles").select("role").eq("id", user.id).single();
-    if (prof?.role !== "admin") return json({ ok: false, error: "Réservé à l'administrateur" });
+    const callerRole = prof?.role;
+    if (callerRole !== "admin" && callerRole !== "enseignant")
+      return json({ ok: false, error: "Réservé au personnel (enseignant ou administrateur)" });
+    const isAdminCaller = callerRole === "admin";
+    // Un enseignant ne peut agir que sur les élèves QU'IL A CRÉÉS.
+    const ownsTarget = async (targetId: string) => {
+      const { data: t } = await admin.from("profiles").select("role, created_by").eq("id", targetId).single();
+      return { target: t, owned: t?.role === "eleve" && t?.created_by === user.id };
+    };
 
     const { action, name, grp, password, id, identifier } = await req.json();
 
@@ -62,10 +70,13 @@ Deno.serve(async (req) => {
         user_metadata: { name: ident, role: "eleve", grp: grp ?? "", identifier: ident },
       });
       if (cErr) return json({ ok: false, error: "Création impossible (nom déjà utilisé ?) : " + cErr.message });
+      // Traçabilité : qui a créé cet élève (un enseignant ne gérera que les siens)
+      await admin.from("profiles").update({ created_by: user.id }).eq("id", created.user.id);
       return json({ ok: true, identifier: ident, id: created.user.id, name: ident, grp: grp ?? "" });
     }
 
     if (action === "create_teacher") {
+      if (!isAdminCaller) return json({ ok: false, error: "Créer un compte du personnel est réservé à l'administrateur" });
       const ident = String(identifier ?? "").trim();
       if (!ident || !name || !password) return json({ ok: false, error: "Identifiant, nom et mot de passe requis" });
       if (/[@\s]/.test(ident)) return json({ ok: false, error: "Identifiant sans espace ni @" });
@@ -85,8 +96,10 @@ Deno.serve(async (req) => {
     if (action === "delete") {
       if (!id) return json({ ok: false, error: "id requis" });
       if (id === user.id) return json({ ok: false, error: "Impossible de supprimer son propre compte" });
-      const { data: target } = await admin.from("profiles").select("role").eq("id", id).single();
+      const { target, owned } = await ownsTarget(id);
       if (target?.role === "admin") return json({ ok: false, error: "Impossible de supprimer un administrateur" });
+      if (!isAdminCaller && !owned)
+        return json({ ok: false, error: "Vous ne pouvez supprimer que les élèves que vous avez créés" });
       const { error: dErr } = await admin.auth.admin.deleteUser(id);
       if (dErr) return json({ ok: false, error: dErr.message });
       return json({ ok: true });
@@ -95,6 +108,10 @@ Deno.serve(async (req) => {
     if (action === "reset_password") {
       if (!id || !password) return json({ ok: false, error: "id et mot de passe requis" });
       if (String(password).length < 6) return json({ ok: false, error: "Mot de passe : 6 caractères minimum" });
+      if (!isAdminCaller) {
+        const { owned } = await ownsTarget(id);
+        if (!owned) return json({ ok: false, error: "Vous ne pouvez réinitialiser que les élèves que vous avez créés" });
+      }
       const { error: rErr } = await admin.auth.admin.updateUserById(id, { password });
       if (rErr) return json({ ok: false, error: rErr.message });
       return json({ ok: true });

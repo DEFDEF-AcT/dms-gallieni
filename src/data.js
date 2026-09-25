@@ -121,9 +121,24 @@ export async function deleteDocument(id) {
 // ── Élèves = profils role='eleve' (comptes « Étudiant Technicien ») ─────────
 export async function listStudents() {
   const { data, error } = await supabase
-    .from("profiles").select("id,name,grp,identifier").eq("role", "eleve").order("identifier");
+    .from("profiles").select("id,name,grp,identifier,created_by").eq("role", "eleve").order("identifier");
   if (error) throw error;
-  return data.map((p) => ({ id: p.id, name: p.name, group: p.grp || "", identifier: p.identifier || "" }));
+  return data.map((p) => ({ id: p.id, name: p.name, group: p.grp || "", identifier: p.identifier || "", createdBy: p.created_by || null }));
+}
+
+// Tours de véhicule (table `inspections` de l'app réception — même projet Supabase).
+// Renvoie le nombre de tours FINALISÉS par cet utilisateur, ou null si indisponible.
+export async function countInspectionsBy(userName) {
+  try {
+    const { count, error } = await supabase
+      .from("inspections").select("*", { count: "exact", head: true })
+      .eq("status", "finalise").eq("created_by", userName);
+    if (error) throw error;
+    return count || 0;
+  } catch (e) {
+    console.warn("[DMS] tours de véhicule indisponibles", e?.message || e);
+    return null;
+  }
 }
 
 // Gestion des comptes élèves via l'Edge Function « manage-students » (admin only).

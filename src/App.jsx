@@ -6,6 +6,7 @@ import {
   createStudent, createTeacher, deleteAccount, resetPassword,
   archiveOrder,
   listDocuments, insertDocument, updateDocument, deleteDocument,
+  countInspectionsBy,
 } from "./data";
 
 // Montants / TVA
@@ -475,6 +476,7 @@ const NAV = [
   { id:"invoices",  ico:"💶", lbl:"Factures", staff:true },
   { id:"history",   ico:"📋", lbl:"Historique" },
   { id:"admin",     ico:"⚙️", lbl:"Administration", staff:true },
+  { id:"account",   ico:"👤", lbl:"Mon compte", staff:true },
 ];
 function Sidebar({ user, page, nav, logout }) {
   const isStaff = user.role !== "eleve";
@@ -1104,10 +1106,9 @@ function AdminPanel({ students, staff, orders, isAdmin, notify, reloadStudents, 
       </div>
       {tab==="students"&&(
         <div style={{display:"flex",flexDirection:"column",gap:14}}>
-          {isAdmin ? (
-            <Crd>
+          <Crd>
               <h3 style={{color:"#2563eb",fontSize:14,fontWeight:700,marginBottom:12}}>Créer un compte élève</h3>
-              <p style={{color:C.mut,fontSize:12,marginBottom:12}}>L'identifiant de connexion de l'élève est son <b>nom complet</b> (il se connectera en tapant son nom + le mot de passe). Deux élèves ne peuvent pas avoir le même nom.</p>
+              <p style={{color:C.mut,fontSize:12,marginBottom:12}}>L'identifiant de connexion de l'élève est son <b>nom complet</b> (il se connectera en tapant son nom + le mot de passe). Deux élèves ne peuvent pas avoir le même nom. Vous pourrez gérer (réinitialiser / supprimer) <b>uniquement les élèves que vous créez</b> ; l'administrateur peut tous les gérer.</p>
               <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:12,marginBottom:12}}>
                 <Inp label="Nom complet *" value={nu.name} onChange={v=>snu(p=>({...p,name:v}))} placeholder="Jean Martin"/>
                 <Sel label="Classe" value={nu.group} onChange={v=>snu(p=>({...p,group:v}))} opts={CLASSES.map(c=>({v:c,l:c}))}/>
@@ -1121,11 +1122,6 @@ function AdminPanel({ students, staff, orders, isAdmin, notify, reloadStudents, 
                 </div>
               )}
             </Crd>
-          ) : (
-            <Crd style={{background:"#f1f5f9"}}>
-              <p style={{color:C.sub,fontSize:13,margin:0}}>La gestion des comptes élèves est réservée à l'administrateur.</p>
-            </Crd>
-          )}
           {students.length===0&&<Crd><p style={{color:C.mut,textAlign:"center",margin:0}}>Aucun élève enregistré</p></Crd>}
           {students.map(u=>(
             <Crd key={u.id}>
@@ -1134,8 +1130,9 @@ function AdminPanel({ students, staff, orders, isAdmin, notify, reloadStudents, 
                   <span style={{color:C.txt,fontWeight:600}}>{u.name}</span>
                   {u.group&&<span style={{marginLeft:8,fontSize:11,padding:"2px 8px",borderRadius:999,fontWeight:600,background:"#dcfce7",color:"#15803d"}}>{u.group}</span>}
                   {u.identifier&&<div style={{color:C.mut,fontSize:12,marginTop:2}}>🔑 {u.identifier}</div>}
+                  {u.createdBy===currentId&&<div style={{color:"#059669",fontSize:11,marginTop:2}}>✓ créé par vous</div>}
                 </div>
-                {isAdmin&&(
+                {(isAdmin||u.createdBy===currentId)&&(
                   <div style={{display:"flex",gap:6}}>
                     <Btn sm ghost onClick={()=>resetStu(u)}>Réinit. mdp</Btn>
                     <Btn sm danger onClick={()=>delStu(u)}>Supprimer</Btn>
@@ -1373,6 +1370,73 @@ function DocForm({ kind, initial, orders, documents, addDocument, editDocument, 
   );
 }
 
+// ── Mon compte (admin + enseignant) : mot de passe & statistiques personnelles ──
+function AccountPanel({ user, orders, documents, students, notify }) {
+  const [p,sp]=useState(""); const [p2,sp2]=useState("");
+  const [busy,sb]=useState(false); const [err,se]=useState("");
+  const [tours,setTours]=useState(undefined);   // undefined = chargement · null = indisponible
+  useEffect(()=>{ let on=true; countInspectionsBy(user.name).then(v=>{ if(on) setTours(v); }); return ()=>{on=false;}; },[user.name]);
+  const changePwd=async()=>{
+    se("");
+    if(p.length<6){se("6 caractères minimum");return;}
+    if(p!==p2){se("Les deux mots de passe ne correspondent pas");return;}
+    sb(true);
+    const { error } = await supabase.auth.updateUser({ password:p });
+    sb(false);
+    if(error){se(error.message);return;}
+    sp(""); sp2(""); notify("Mot de passe modifié");
+  };
+  const byMe=(v)=>v===user.name;
+  const myEst=documents.filter(d=>d.kind==="estimate"&&byMe(d.createdBy));
+  const myInv=documents.filter(d=>d.kind==="invoice"&&byMe(d.createdBy));
+  const rs=ROLE_STYLE[user.role]||{bg:"#e2e8f0",cl:C.sub};
+  const stats=[
+    {l:"Élèves créés",v:students.filter(s=>s.createdBy===user.id).length,c:"#15803d"},
+    {l:"OR suivis (référent)",v:orders.filter(o=>byMe(o.teacher)).length,c:"#2563eb"},
+    {l:"OR créés par moi",v:orders.filter(o=>byMe(o.createdBy)).length,c:"#1d4ed8"},
+    {l:"OR terminés (référent)",v:orders.filter(o=>byMe(o.teacher)&&o.status==="termine").length,c:"#059669"},
+    {l:"Tours de véhicule validés",v:tours===undefined?"…":(tours===null?"—":tours),c:"#c2410c"},
+    {l:"Estimations établies",v:myEst.length,c:"#7c3aed"},
+    {l:"dont signées client",v:myEst.filter(d=>d.signature).length,c:"#059669"},
+    {l:"Factures établies",v:myInv.length,c:"#b45309"},
+    {l:"Total facturé TTC",v:eur(myInv.reduce((a,d)=>a+docTotals(d).ttc,0)),c:"#1d4ed8"},
+  ];
+  return (
+    <div style={{maxWidth:900,margin:"0 auto",display:"flex",flexDirection:"column",gap:16}}>
+      <h2 style={{color:C.txt,fontSize:20,fontWeight:700,margin:0}}>👤 Mon compte</h2>
+      <Crd>
+        <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+          <span style={{color:C.txt,fontWeight:700,fontSize:16}}>{user.name}</span>
+          <span style={{fontSize:11,padding:"2px 8px",borderRadius:999,fontWeight:600,background:rs.bg,color:rs.cl}}>{roleLabel(user.role)}</span>
+        </div>
+      </Crd>
+
+      <div>
+        <h3 style={{color:"#2563eb",fontSize:14,fontWeight:700,marginBottom:10}}>📊 Mes statistiques</h3>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(170px,1fr))",gap:12}}>
+          {stats.map(st=>(
+            <Crd key={st.l} style={{textAlign:"center"}}>
+              <div style={{fontSize:st.l.startsWith("Total")?22:34,fontWeight:700,color:st.c}}>{st.v}</div>
+              <div style={{fontSize:12,color:C.sub,marginTop:4}}>{st.l}</div>
+            </Crd>
+          ))}
+        </div>
+        {tours===null&&<p style={{color:C.mut,fontSize:12,marginTop:8}}>Les tours de véhicule proviennent de l'application de réception ; la donnée n'est pas accessible pour l'instant.</p>}
+      </div>
+
+      <Crd>
+        <h3 style={{color:"#2563eb",fontSize:14,fontWeight:700,marginBottom:12}}>🔑 Modifier mon mot de passe</h3>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:12,marginBottom:12}}>
+          <Inp label="Nouveau mot de passe" value={p} onChange={sp} type="password" placeholder="6 caractères min."/>
+          <Inp label="Confirmer" value={p2} onChange={sp2} type="password" placeholder="••••••••"/>
+        </div>
+        {err&&<p style={{color:"#dc2626",fontSize:13,margin:"0 0 10px"}}>{err}</p>}
+        <Btn sm onClick={changePwd} disabled={busy}>{busy?"Enregistrement…":"Modifier le mot de passe"}</Btn>
+      </Crd>
+    </div>
+  );
+}
+
 export default function DMSApp() {
   const { user:cu, ready, recovery, clearRecovery } = useSession();
   const { orders, addOrder, editOrder, removeOrder } = useOrders(cu?.id);
@@ -1405,6 +1469,7 @@ export default function DMSApp() {
     if(page==="invoices")     return isStaff?<DocsList kind="invoice" documents={documents} openDoc={openDoc} newDoc={()=>newDoc("invoice")}/>:null;
     if(page==="doc-form")     return isStaff?<DocForm kind={docKind} initial={selDoc?documents.find(d=>d.id===selDoc):null} orders={orders} documents={documents} addDocument={addDocument} editDocument={editDocument} removeDocument={removeDocument} isAdmin={isAdmin} user={cu} nav={nav} notify={notify}/>:null;
     if(page==="history")      return<HistoryView orders={orders} documents={documents} isStaff={cu.role!=="eleve"} nav={nav} selOrd={ssi} openDoc={openDoc}/>;
+    if(page==="account")      return isStaff?<AccountPanel user={cu} orders={orders} documents={documents} students={students} notify={notify}/>:null;
     if(page==="admin")        return isStaff?<AdminPanel students={students} staff={staff} orders={orders} isAdmin={isAdmin} notify={notify} reloadStudents={reloadStudents} reloadStaff={reloadStaff} currentId={cu.id}/>:null;
     return null;
   };

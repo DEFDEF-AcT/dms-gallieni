@@ -27,6 +27,8 @@ function archiveToDrive(order, notify) {
 
 // Domaine interne des identifiants (doit correspondre à l'Edge Function).
 const STUDENT_DOMAIN = "eleve.gallieni.local";
+// Logo de l'établissement affiché dans l'app (écran de connexion, barre latérale, en-tête)
+const LOGO = import.meta.env.BASE_URL + "logo.png";
 // Normalise un identifiant (nom complet) en partie locale d'email. DOIT être
 // identique au slugId() de l'Edge Function. « Jean Martin » → « jean.martin ».
 const slugId = (s) => String(s).normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase().replace(/[^a-z0-9]+/g, ".").replace(/^\.+|\.+$/g, "");
@@ -385,7 +387,7 @@ function AuthCard({ children }) {
     <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:C.bg, padding:16 }}>
       <div style={{ background:C.card, borderRadius:16, padding:32, width:"100%", maxWidth:380, border:"1px solid "+C.bdr, boxShadow:"0 12px 40px rgba(37,99,235,.15)" }}>
         <div style={{ textAlign:"center", marginBottom:28 }}>
-          <div style={{ fontSize:48, marginBottom:12 }}>🔧</div>
+          <img src={LOGO} alt="DMS Atelier BTS MV – Lycée Gallieni" style={{ width:104, height:104, borderRadius:"50%", display:"block", margin:"0 auto 12px" }}/>
           <h1 style={{ color:C.txt, fontSize:22, fontWeight:700, margin:0 }}>DMS – Atelier BTS MV</h1>
           <p style={{ color:C.mut, fontSize:13, marginTop:6 }}>Lycee Gallieni</p>
         </div>
@@ -484,7 +486,7 @@ function Sidebar({ user, page, nav, logout }) {
   return (
     <div style={{ width:220, background:C.side, borderRight:"1px solid "+C.bdr, display:"flex", flexDirection:"column", height:"100vh", flexShrink:0 }}>
       <div style={{ padding:"20px 16px 16px", borderBottom:"1px solid "+C.bdr }}>
-        <div style={{ color:"#3b82f6", fontWeight:700, fontSize:14, marginBottom:8 }}>🔧 DMS Gallieni</div>
+        <div style={{ color:"#3b82f6", fontWeight:700, fontSize:14, marginBottom:8, display:"flex", alignItems:"center", gap:8 }}><img src={LOGO} alt="" style={{ width:26, height:26, borderRadius:"50%", flexShrink:0 }}/>DMS Gallieni</div>
         <div style={{ color:C.txt, fontSize:13, fontWeight:600 }}>{user.name}</div>
         <span style={{ fontSize:11, padding:"2px 8px", borderRadius:999, fontWeight:600, marginTop:4, display:"inline-block", background:rs.bg, color:rs.cl }}>{roleLabel(user.role)}</span>
       </div>
@@ -1486,7 +1488,7 @@ export default function DMSApp() {
         <header style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 16px",background:C.hdr,borderBottom:"1px solid "+C.bdr,position:"sticky",top:0,zIndex:30}}>
           <div style={{display:"flex",alignItems:"center",gap:12}}>
             {!isDesktop&&<button onClick={()=>sso(true)} style={{background:"none",border:"none",color:C.sub,cursor:"pointer",fontSize:22,padding:"2px 6px",lineHeight:1}}>☰</button>}
-            <div><div style={{color:"#3b82f6",fontWeight:700,fontSize:14}}>🔧 DMS – Atelier BTS MV</div><div style={{color:C.mut,fontSize:11}}>Lycee Gallieni</div></div>
+            <div style={{display:"flex",alignItems:"center",gap:8}}><img src={LOGO} alt="" style={{width:28,height:28,borderRadius:"50%",flexShrink:0}}/><div><div style={{color:"#3b82f6",fontWeight:700,fontSize:14}}>DMS – Atelier BTS MV</div><div style={{color:C.mut,fontSize:11}}>Lycee Gallieni</div></div></div>
           </div>
           <div style={{display:"flex",alignItems:"center",gap:8}}>
             {isDesktop&&<span style={{color:C.sub,fontSize:13}}>{cu.name}</span>}

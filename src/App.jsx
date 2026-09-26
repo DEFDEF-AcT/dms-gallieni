@@ -472,8 +472,8 @@ function ResetPasswordView({ notify, onDone }) {
 const NAV = [
   { id:"dashboard", ico:"📊", lbl:"Tableau de bord" },
   { id:"orders",    ico:"🔧", lbl:"Ordres de réparation" },
-  { id:"estimates", ico:"🧾", lbl:"Estimations", staff:true },
-  { id:"invoices",  ico:"💶", lbl:"Factures", staff:true },
+  { id:"estimates", ico:"🧾", lbl:"Estimations" },
+  { id:"invoices",  ico:"💶", lbl:"Factures" },
   { id:"history",   ico:"📋", lbl:"Historique" },
   { id:"admin",     ico:"⚙️", lbl:"Administration", staff:true },
   { id:"account",   ico:"👤", lbl:"Mon compte", staff:true },
@@ -504,9 +504,8 @@ function Sidebar({ user, page, nav, logout }) {
   );
 }
 
-function Dashboard({ orders, user, nav, selOrd }) {
+function Dashboard({ orders, nav, selOrd }) {
   const active = orders.filter(o => o.status !== "termine");
-  const isStaff = user.role !== "eleve";
   const stats = [
     { l:"En atelier",   v:active.length,                                              c:"#2563eb" },
     { l:"En attente",   v:orders.filter(o=>o.status==="en_attente").length,            c:"#f59e0b" },
@@ -519,7 +518,7 @@ function Dashboard({ orders, user, nav, selOrd }) {
     <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:12 }}>
         <h2 style={{ color:C.txt, fontSize:20, fontWeight:700, margin:0 }}>📊 Tableau de bord</h2>
-        {isStaff && <Btn onClick={() => nav("new-order")}>+ Nouvel ordre de réparation</Btn>}
+        <Btn onClick={() => nav("new-order")}>+ Nouvel ordre de réparation</Btn>
       </div>
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(130px,1fr))", gap:10 }}>
         {stats.map(s => <Crd key={s.l} style={{ textAlign:"center" }}><div style={{ fontSize:34, fontWeight:700, color:s.c }}>{s.v}</div><div style={{ fontSize:12, color:C.sub, marginTop:4 }}>{s.l}</div></Crd>)}
@@ -572,9 +571,8 @@ function OrdCard({ o, onClick }) {
   );
 }
 
-function OrdersList({ orders, user, nav, selOrd }) {
+function OrdersList({ orders, nav, selOrd }) {
   const [flt,sf]=useState("active"); const [q,sq]=useState("");
-  const isStaff = user.role!=="eleve";
   const shown = orders.filter(o => {
     const ok = flt==="active"?o.status!=="termine":flt==="all"?true:o.status===flt;
     return ok && (!q||[o.plate,o.brand,o.model,o.clientName,o.orderNum,o.students].join(" ").toLowerCase().includes(q.toLowerCase()));
@@ -583,7 +581,7 @@ function OrdersList({ orders, user, nav, selOrd }) {
     <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:12 }}>
         <h2 style={{ color:C.txt, fontSize:20, fontWeight:700, margin:0 }}>🔧 Ordres de réparation</h2>
-        {isStaff && <Btn onClick={() => nav("new-order")}>+ Nouvel ordre de réparation</Btn>}
+        <Btn onClick={() => nav("new-order")}>+ Nouvel ordre de réparation</Btn>
       </div>
       <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
         {[["active","Actifs"],["en_attente","En attente"],["en_cours","En cours"],["termine","Termines"],["all","Tous"]].map(([v,l]) => (
@@ -957,11 +955,11 @@ function ExitModal({ o, onOk, onClose }) {
   );
 }
 
-function HistoryView({ orders, documents, isStaff, nav, selOrd, openDoc }) {
+function HistoryView({ orders, documents, nav, selOrd, openDoc }) {
   const [tab,st]=useState("orders");
   const [q,sq]=useState("");
   const ql=q.toLowerCase();
-  const TABS=[["orders","🔧 Ordres"],...(isStaff?[["estimate","🧾 Estimations"],["invoice","💶 Factures"]]:[])];
+  const TABS=[["orders","🔧 Ordres"],["estimate","🧾 Estimations"],["invoice","💶 Factures"]];
   const ords=[...orders].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt))
     .filter(o=>!q||[o.plate,o.brand,o.model,o.clientName,o.orderNum,o.students].join(" ").toLowerCase().includes(ql));
   const docs=(documents||[]).filter(d=>d.kind===tab).sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt))
@@ -1461,14 +1459,14 @@ export default function DMSApp() {
   const isStaff=cu.role!=="eleve"; const isAdmin=cu.role==="admin";
   const rs=ROLE_STYLE[cu.role]||{bg:"#e2e8f0",cl:C.sub};
   const renderPage=()=>{
-    if(page==="dashboard")    return<Dashboard orders={orders} user={cu} nav={nav} selOrd={ssi}/>;
-    if(page==="orders")       return<OrdersList orders={orders} user={cu} nav={nav} selOrd={ssi}/>;
-    if(page==="new-order")    return isStaff?<NewOrderForm addOrder={addOrder} teachers={staff} students={students} user={cu} nav={nav} selOrd={ssi} notify={notify}/>:null;
+    if(page==="dashboard")    return<Dashboard orders={orders} nav={nav} selOrd={ssi}/>;
+    if(page==="orders")       return<OrdersList orders={orders} nav={nav} selOrd={ssi}/>;
+    if(page==="new-order")    return <NewOrderForm addOrder={addOrder} teachers={staff} students={students} user={cu} nav={nav} selOrd={ssi} notify={notify}/>;
     if(page==="order-detail") return selId?<OrderDetail orderId={selId} orders={orders} editOrder={editOrder} removeOrder={removeOrder} isAdmin={isAdmin} user={cu} nav={nav} notify={notify} students={students}/>:null;
-    if(page==="estimates")    return isStaff?<DocsList kind="estimate" documents={documents} openDoc={openDoc} newDoc={()=>newDoc("estimate")}/>:null;
-    if(page==="invoices")     return isStaff?<DocsList kind="invoice" documents={documents} openDoc={openDoc} newDoc={()=>newDoc("invoice")}/>:null;
-    if(page==="doc-form")     return isStaff?<DocForm kind={docKind} initial={selDoc?documents.find(d=>d.id===selDoc):null} orders={orders} documents={documents} addDocument={addDocument} editDocument={editDocument} removeDocument={removeDocument} isAdmin={isAdmin} user={cu} nav={nav} notify={notify}/>:null;
-    if(page==="history")      return<HistoryView orders={orders} documents={documents} isStaff={cu.role!=="eleve"} nav={nav} selOrd={ssi} openDoc={openDoc}/>;
+    if(page==="estimates")    return <DocsList kind="estimate" documents={documents} openDoc={openDoc} newDoc={()=>newDoc("estimate")}/>;
+    if(page==="invoices")     return <DocsList kind="invoice" documents={documents} openDoc={openDoc} newDoc={()=>newDoc("invoice")}/>;
+    if(page==="doc-form")     return <DocForm kind={docKind} initial={selDoc?documents.find(d=>d.id===selDoc):null} orders={orders} documents={documents} addDocument={addDocument} editDocument={editDocument} removeDocument={removeDocument} isAdmin={isAdmin} user={cu} nav={nav} notify={notify}/>;
+    if(page==="history")      return<HistoryView orders={orders} documents={documents} nav={nav} selOrd={ssi} openDoc={openDoc}/>;
     if(page==="account")      return isStaff?<AccountPanel user={cu} orders={orders} documents={documents} students={students} notify={notify}/>:null;
     if(page==="admin")        return isStaff?<AdminPanel students={students} staff={staff} orders={orders} isAdmin={isAdmin} notify={notify} reloadStudents={reloadStudents} reloadStaff={reloadStaff} currentId={cu.id}/>:null;
     return null;

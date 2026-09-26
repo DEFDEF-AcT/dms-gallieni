@@ -164,7 +164,7 @@ create policy read_students on students for select using (auth.role() = 'authent
 -- lecture des OR : le staff voit tout ; un élève ne voit QUE les OR où son nom
 -- figure dans les élèves affectés (assigned_students). Le `?` teste l'appartenance.
 create policy read_orders   on orders   for select
-  using ( is_staff() or assigned_students ? current_name() );
+  using ( is_staff() or assigned_students ? current_name() or created_by = current_name() );
 
 -- création / modification : staff
 drop policy if exists ins_students on students;
@@ -174,10 +174,11 @@ drop policy if exists upd_orders   on orders;
 create policy ins_students on students for insert with check (auth.role() = 'authenticated');
 create policy upd_students on students for update using (auth.role() = 'authenticated');
 -- création d'OR : staff uniquement (les élèves ne peuvent pas créer d'ordre)
-create policy ins_orders   on orders   for insert with check (is_staff());
--- modification : staff partout ; élève uniquement sur les OR où il est affecté
+-- création d'OR : ouverte à tout utilisateur connecté (élèves compris)
+create policy ins_orders   on orders   for insert with check (auth.role() = 'authenticated');
+-- modification : staff partout ; élève sur les OR où il est affecté OU qu'il a créés
 create policy upd_orders   on orders   for update
-  using ( is_staff() or assigned_students ? current_name() );
+  using ( is_staff() or assigned_students ? current_name() or created_by = current_name() );
 
 -- suppression + gestion des rôles : admin uniquement
 drop policy if exists del_students on students;
@@ -246,9 +247,10 @@ drop policy if exists read_documents on documents;
 drop policy if exists ins_documents  on documents;
 drop policy if exists upd_documents  on documents;
 drop policy if exists del_documents  on documents;
-create policy read_documents on documents for select using (is_staff());
-create policy ins_documents  on documents for insert with check (is_staff());
-create policy upd_documents  on documents for update using (is_staff());
+-- Documents : le staff voit tout ; un élève ne voit/modifie QUE ceux qu'il a créés.
+create policy read_documents on documents for select using (is_staff() or created_by = current_name());
+create policy ins_documents  on documents for insert with check (auth.role() = 'authenticated');
+create policy upd_documents  on documents for update using (is_staff() or created_by = current_name());
 create policy del_documents  on documents for delete using (is_admin());
 
 alter publication supabase_realtime add table documents;

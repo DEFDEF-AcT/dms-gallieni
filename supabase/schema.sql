@@ -186,6 +186,27 @@ create policy ins_orders   on orders   for insert with check (auth.role() = 'aut
 create policy upd_orders   on orders   for update
   using ( is_staff() or assigned_students ? current_name() or created_by = current_name() );
 
+-- Clôture d'un OR : réservée au staff. L'app masque déjà le bouton aux élèves ;
+-- ce garde-fou empêche de contourner la règle par un appel direct à l'API.
+create or replace function guard_order_completion() returns trigger
+  language plpgsql security definer set search_path = ''
+as $$
+begin
+  if new.status = 'termine'
+     and coalesce(old.status, '') <> 'termine'
+     and auth.role() = 'authenticated'      -- laisse passer le service_role
+     and not public.is_staff() then
+    raise exception 'Seul un enseignant ou un administrateur peut terminer un ordre de réparation.'
+      using errcode = '42501';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_order_completion on orders;
+create trigger trg_order_completion before update on orders
+  for each row execute function guard_order_completion();
+
 -- suppression + gestion des rôles : admin uniquement
 drop policy if exists del_students on students;
 drop policy if exists del_orders   on orders;
@@ -264,6 +285,8 @@ alter publication supabase_realtime add table documents;
 -- ----------------------------------------------------------------------------
 -- MIGRATION (bases déjà en service) : traçabilité VE/VH
 --   alter table orders add column if not exists ev jsonb;
+-- MIGRATION : clôture réservée au staff → (re)créer guard_order_completion()
+--   et le déclencheur trg_order_completion ci-dessus.
 -- ----------------------------------------------------------------------------
 
 -- ============================================================================

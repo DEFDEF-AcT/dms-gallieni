@@ -978,7 +978,7 @@ function OrderDetail({ orderId, orders, editOrder, removeOrder, isAdmin, user, n
   const togTask=tid=>{
     if(!canEdit)return;
     const tasks=o.tasks.map(t=>{if(t.id!==tid)return t;const d=!t.done;return{...t,done:d,doneBy:d?user.name:"",doneAt:d?new Date().toISOString():""};});
-    upd({tasks,status:tasks.every(t=>t.done)?"termine":(o.status==="en_attente"?"en_cours":o.status)});
+    upd({tasks,status:o.status==="en_attente"?"en_cours":o.status});
   };
   const addT=()=>{if(!newTask.trim())return;upd({tasks:[...o.tasks,{id:gid(),label:newTask.trim(),done:false,doneBy:"",doneAt:"",est:"",amount:""}]});snt("");};
   const dn=o.tasks?o.tasks.filter(t=>t.done).length:0,tot=o.tasks?o.tasks.length:0,pct=tot?Math.round(dn/tot*100):0;
@@ -1143,14 +1143,19 @@ function OrderDetail({ orderId, orders, editOrder, removeOrder, isAdmin, user, n
           </div>
         </Crd>
       )}
+      {!isStaff&&o.status!=="termine"&&(
+        <div style={{marginTop:20,paddingTop:16,borderTop:"1px solid "+C.bdr,color:C.mut,fontSize:13}}>
+          🔒 La clôture de l'ordre de réparation est réservée à l'enseignant ou à l'administrateur.
+        </div>
+      )}
       {isStaff&&(
         <div style={{marginTop:20,paddingTop:16,borderTop:"1px solid "+C.bdr}}>
           {o.status!=="termine"?(
             <Btn full onClick={()=>{ if(evOpen(o.ev)&&!window.confirm("⚠️ La batterie de traction est encore consignée (hors tension).\n\nLa déconsignation / remise sous tension n'a pas été horodatée dans l'onglet « ⚡ Sécurité électrique ».\n\nTerminer quand même l'ordre de réparation ?"))return; sse(true); }} style={{background:"#065f46",fontSize:15,padding:"12px"}}>✅ Valider et terminer l'OR</Btn>
           ):(
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:10}}>
-              <span style={{color:"#059669",fontSize:14,fontWeight:600}}>✅ Ordre terminé{o.exitDate?" le "+fD(o.exitDate):""} – archivé sur le Drive</span>
-              <Btn sm ghost onClick={()=>archiveToDrive(o,notify)} style={{borderColor:"#16a34a",color:"#059669"}}>📁 Ré-archiver sur Drive</Btn>
+              <span style={{color:"#059669",fontSize:14,fontWeight:600}}>✅ Ordre terminé{o.exitDate?" le "+fD(o.exitDate):""}</span>
+              <Btn sm ghost onClick={()=>archiveToDrive(o,notify)} style={{borderColor:"#16a34a",color:"#059669"}}>📁 Archiver sur le Drive</Btn>
             </div>
           )}
           {isAdmin&&(
@@ -1160,29 +1165,38 @@ function OrderDetail({ orderId, orders, editOrder, removeOrder, isAdmin, user, n
           )}
         </div>
       )}
-      {showExit&&<ExitModal o={o} onOk={d=>{upd({...d,status:"termine"});sse(false);st("exit");notify("Ordre terminé");archiveToDrive({...o,...d,status:"termine"},notify);}} onClose={()=>sse(false)}/>}
+      {showExit&&<ExitModal o={o} onOk={(d,archive)=>{upd({...d,status:"termine"});sse(false);st("exit");notify(archive?"Ordre terminé":"Ordre terminé (non archivé)");if(archive)archiveToDrive({...o,...d,status:"termine"},notify);}} onClose={()=>sse(false)}/>}
     </div>
   );
 }
 
 function ExitModal({ o, onOk, onClose }) {
   const [f,sf]=useState({exitDate:today(),exitTime:tNow(),exitCondition:""});
+  const [archive,sa]=useState(true);
   const set=(k,v)=>sf(p=>({...p,[k]:v}));
   return (
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.75)",zIndex:50,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
       <div style={{background:C.card,borderRadius:16,padding:24,width:"100%",maxWidth:480,border:"1px solid "+C.bdr}}>
         <h3 style={{color:C.txt,fontSize:18,fontWeight:700,marginBottom:4}}>✅ Terminer l'ordre de réparation</h3>
-        <p style={{color:C.sub,fontSize:14,marginBottom:16}}>{o.plate} – {o.brand} {o.model} · l'OR sera marqué « terminé » et archivé sur le Drive.</p>
+        <p style={{color:C.sub,fontSize:14,marginBottom:16}}>{o.plate} – {o.brand} {o.model} · l'OR sera marqué « terminé ».</p>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
           <Inp label="Date de sortie" value={f.exitDate} onChange={v=>set("exitDate",v)} type="date"/>
           <Inp label="Heure de sortie" value={f.exitTime} onChange={v=>set("exitTime",v)} type="time"/>
         </div>
-        <div style={{marginBottom:20}}>
+        <div style={{marginBottom:16}}>
           <TA label="État du véhicule à la sortie" value={f.exitCondition} onChange={v=>set("exitCondition",v)} placeholder="Propre, réparation effectuée, client informé…" rows={3}/>
         </div>
+        <label style={{display:"flex",alignItems:"flex-start",gap:10,padding:"10px 12px",borderRadius:8,marginBottom:20,cursor:"pointer",
+          background:archive?"#dcfce7":"#f1f5f9",border:"1px solid "+(archive?"#16a34a":C.bdr)}}>
+          <input type="checkbox" checked={archive} onChange={e=>sa(e.target.checked)} style={{marginTop:2,flexShrink:0}}/>
+          <span>
+            <span style={{display:"block",fontSize:13,fontWeight:600,color:archive?"#15803d":C.txt}}>📁 Archiver le PDF sur le Google Drive</span>
+            <span style={{fontSize:11,color:C.mut}}>{archive?"Le PDF sera déposé dans le dossier « "+orderFolder(o)+" ».":"Aucun dépôt sur le Drive. Possible plus tard depuis l'ordre."}</span>
+          </span>
+        </label>
         <div style={{display:"flex",justifyContent:"flex-end",gap:10}}>
           <Btn ghost onClick={onClose}>Annuler</Btn>
-          <Btn onClick={()=>onOk(f)} style={{background:"#065f46"}}>✅ Valider et terminer</Btn>
+          <Btn onClick={()=>onOk(f,archive)} style={{background:"#065f46"}}>✅ Valider et terminer</Btn>
         </div>
       </div>
     </div>

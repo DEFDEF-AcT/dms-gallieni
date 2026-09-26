@@ -161,10 +161,10 @@ function csvExport(rows, fname) {
   const a = document.createElement("a"); a.href = URL.createObjectURL(b); a.download = fname; a.click();
 }
 function toCSV(orders) {
-  const H = ["N.OR","Ref.","Immat.","Marque","Modele","Annee","KM","Type","Client/Enseignant","Eleves","Motif","Date entree","Heure","Date sortie","Statut","Taches OK","Taches total","Observations","Ventes add.","Signature accord","Cree par"];
+  const H = ["N° OR","Réf.","Immat.","Marque","Modèle","Année","KM","Type","Client/Enseignant","Élèves","Motif","Date d'entrée","Heure","Date de sortie","Statut","Tâches OK","Tâches total","Observations","Ventes add.","Signature accord","Créé par"];
   return [H, ...orders.map(o => [
     o.orderNum, o.fileRef||"", o.plate, o.brand, o.model, o.year||"", o.km||"",
-    o.vtype==="peda"?"Pedagogique":"Client",
+    o.vtype==="peda"?"Pédagogique":"Client",
     o.vtype==="client"?(o.clientName||""):(o.teacher||""),
     o.students||"", o.reason||"", fD(o.entryDate), o.entryTime||"", fD(o.exitDate),
     VS[o.status]?VS[o.status].label:"",
@@ -249,7 +249,7 @@ function generatePDF(order) {
     const w = window.open(url, "_blank");
     if (w) { setTimeout(() => { try { w.print(); } catch { /* ignore */ } }, 800); }
     else { const a = document.createElement("a"); a.href = url; a.download = order.orderNum+".html"; a.click(); }
-  } catch { alert("Impossible d'ouvrir la fenetre d'impression. Verifiez les popups."); }
+  } catch { alert("Impossible d'ouvrir la fenêtre d'impression. Vérifiez les fenêtres surgissantes."); }
 }
 
 // ── PDF Estimation / Facture ──
@@ -261,32 +261,32 @@ function docHTML(doc) {
     return `<tr${i%2?' style="background:#f9f9f9"':''}><td>${esc(it.label||"")}</td><td class="r">${esc(String(it.qty??""))}</td><td class="r">${eur(it.unitPrice)}</td><td class="r">${eur(lt)}</td></tr>`;
   }).join("") || `<tr><td colspan="4" style="color:#999">Aucune ligne</td></tr>`;
   const sigBlock = isEst ? `<div class="sr">
-    <div><div class="sl">Bon pour accord — Signature du client</div><div class="sb">${doc.signature?`<img src="${doc.signature}" style="max-height:72px;max-width:100%;display:block;margin:auto;"/>`:`<div style="color:#bbb;line-height:80px;text-align:center;font-size:11px;">Non signee</div>`}</div><div class="sn">${esc(doc.clientName||"")}</div></div>
+    <div><div class="sl">Bon pour accord — Signature du client</div><div class="sb">${doc.signature?`<img src="${doc.signature}" style="max-height:72px;max-width:100%;display:block;margin:auto;"/>`:`<div style="color:#bbb;line-height:80px;text-align:center;font-size:11px;">Non signée</div>`}</div><div class="sn">${esc(doc.clientName||"")}</div></div>
     <div><div class="sl">Cachet / Visa atelier</div><div class="sb"></div></div></div>` : "";
   const dateLine = isEst
     ? (doc.validUntil?`<div class="om">Valable jusqu'au ${fD(doc.validUntil)}</div>`:"")
-    : (doc.validUntil?`<div class="om">Echeance : ${fD(doc.validUntil)}</div>`:"");
+    : (doc.validUntil?`<div class="om">Échéance : ${fD(doc.validUntil)}</div>`:"");
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(doc.docNum||"")}</title>
 <style>*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#111;background:#fff;}.page{padding:12mm 15mm;max-width:210mm;margin:0 auto;}.hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #1d4ed8;padding-bottom:10px;margin-bottom:14px;}.bn{font-size:20px;font-weight:bold;color:#1d4ed8;}.bs{font-size:10px;color:#555;margin-top:2px;}.on{font-size:22px;font-weight:bold;color:#1d4ed8;text-align:right;}.om{font-size:10px;color:#555;text-align:right;margin-top:2px;}.sec{margin-bottom:10px;}.sh{background:#1d4ed8;color:#fff;padding:4px 10px;font-size:11px;font-weight:bold;margin-bottom:6px;}.grid{display:grid;gap:6px 10px;}.g2{grid-template-columns:1fr 1fr;}.vl{font-size:13px;font-weight:bold;}table{width:100%;border-collapse:collapse;font-size:11px;margin-top:4px;}th{background:#1d4ed8;color:#fff;text-align:left;padding:5px 8px;font-size:10px;}td{padding:5px 8px;border-bottom:1px solid #eee;}td.r,th.r{text-align:right;}.tot{margin-top:10px;margin-left:auto;width:55%;}.tot div{display:flex;justify-content:space-between;padding:3px 8px;font-size:12px;}.tot .ttc{background:#1d4ed8;color:#fff;font-weight:bold;font-size:13px;border-radius:4px;}.tb{border:1px solid #ddd;padding:6px 8px;min-height:40px;font-size:11px;white-space:pre-wrap;}.sr{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:16px;padding-top:12px;border-top:2px solid #1d4ed8;}.sl{font-size:10px;color:#333;font-weight:bold;margin-bottom:5px;}.sb{border:1px solid #999;height:82px;background:#fafafa;overflow:hidden;}.sn{font-size:9px;color:#888;text-align:center;margin-top:3px;}.foot{margin-top:14px;padding-top:8px;border-top:1px solid #ddd;font-size:9px;color:#aaa;text-align:center;}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}</style>
 </head><body><div class="page">
-<div class="hdr"><div><div class="bn">Lycee Gallieni</div><div class="bs">Atelier BTS Maintenance des Vehicules</div><div class="bs" style="font-weight:bold;margin-top:5px;font-size:13px;">${isEst?"DEVIS / ESTIMATION":"FACTURE"}</div></div>
-<div><div class="on">${esc(doc.docNum||"")}</div><div class="om">Date : ${fD(doc.createdAt||today())}</div>${dateLine}<div class="om">Etabli par : ${esc(doc.createdBy||"—")}</div></div></div>
+<div class="hdr"><div><div class="bn">Lycée Gallieni</div><div class="bs">Atelier BTS Maintenance des Véhicules</div><div class="bs" style="font-weight:bold;margin-top:5px;font-size:13px;">${isEst?"DEVIS / ESTIMATION":"FACTURE"}</div></div>
+<div><div class="on">${esc(doc.docNum||"")}</div><div class="om">Date : ${fD(doc.createdAt||today())}</div>${dateLine}<div class="om">Établi par : ${esc(doc.createdBy||"—")}</div></div></div>
 <div class="grid g2">
 <div class="sec"><div class="sh">Client</div><div class="vl">${esc(doc.clientName||"—")}</div><div class="bs">${esc(doc.clientPhone||"")}</div></div>
-<div class="sec"><div class="sh">Vehicule</div><div class="vl">${esc(doc.plate||"—")}</div><div class="bs">${esc(doc.brand||"")} ${esc(doc.model||"")} ${doc.year?"("+esc(doc.year)+")":""} ${doc.km?"· "+esc(doc.km)+" km":""}</div></div></div>
-<div class="sec"><div class="sh">Detail des prestations</div>
-<table><thead><tr><th>Designation</th><th class="r">Qte</th><th class="r">PU HT</th><th class="r">Total HT</th></tr></thead><tbody>${rows}</tbody></table>
+<div class="sec"><div class="sh">Véhicule</div><div class="vl">${esc(doc.plate||"—")}</div><div class="bs">${esc(doc.brand||"")} ${esc(doc.model||"")} ${doc.year?"("+esc(doc.year)+")":""} ${doc.km?"· "+esc(doc.km)+" km":""}</div></div></div>
+<div class="sec"><div class="sh">Détail des prestations</div>
+<table><thead><tr><th>Désignation</th><th class="r">Qté</th><th class="r">PU HT</th><th class="r">Total HT</th></tr></thead><tbody>${rows}</tbody></table>
 <div class="tot"><div><span>Total HT</span><span>${eur(t.ht)}</span></div><div><span>TVA (${esc(String(doc.tvaRate??0))}%)</span><span>${eur(t.tva)}</span></div><div class="ttc"><span>Total TTC</span><span>${eur(t.ttc)}</span></div></div></div>
 ${doc.notes?`<div class="sec"><div class="sh">Notes</div><div class="tb">${esc(doc.notes)}</div></div>`:""}
 ${sigBlock}
-<div class="foot">Lycee Gallieni – BTS Maintenance des Vehicules &nbsp;|&nbsp; ${esc(doc.docNum||"")} &nbsp;|&nbsp; Imprime le ${new Date().toLocaleDateString("fr-FR")}</div>
+<div class="foot">Lycée Gallieni – BTS Maintenance des Véhicules &nbsp;|&nbsp; ${esc(doc.docNum||"")} &nbsp;|&nbsp; Imprimé le ${new Date().toLocaleDateString("fr-FR")}</div>
 </div></body></html>`;
 }
 function generateDocPDF(doc){
   const html=docHTML(doc);
   try{ const blob=new Blob([html],{type:"text/html;charset=utf-8;"}); const url=URL.createObjectURL(blob); const w=window.open(url,"_blank");
     if(w){setTimeout(()=>{try{w.print();}catch{/* ignore */}},800);} else {const a=document.createElement("a");a.href=url;a.download=(doc.docNum||"document")+".html";a.click();}
-  }catch{ alert("Impossible d'ouvrir l'impression. Verifiez les popups."); }
+  }catch{ alert("Impossible d'ouvrir l'impression. Vérifiez les fenêtres surgissantes."); }
 }
 function archiveDocToDrive(doc,notify){
   archiveOrder({ html:docHTML(doc), folder:(doc.clientName||"").trim()||"Client sans nom", orderNum:doc.docNum })
@@ -512,9 +512,9 @@ function Dashboard({ orders, nav, selOrd }) {
     { l:"En atelier",   v:active.length,                                              c:"#2563eb" },
     { l:"En attente",   v:orders.filter(o=>o.status==="en_attente").length,            c:"#f59e0b" },
     { l:"En cours",     v:orders.filter(o=>o.status==="en_cours").length,              c:"#3b82f6" },
-    { l:"Termines",     v:orders.filter(o=>o.status==="termine").length,               c:"#059669" },
+    { l:"Terminés",     v:orders.filter(o=>o.status==="termine").length,               c:"#059669" },
     { l:"Clients",      v:active.filter(o=>o.vtype==="client").length,                 c:"#a78bfa" },
-    { l:"Pedagogiques", v:active.filter(o=>o.vtype==="peda").length,                  c:"#fb923c" },
+    { l:"Pédagogiques", v:active.filter(o=>o.vtype==="peda").length,                  c:"#fb923c" },
   ];
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
@@ -526,9 +526,9 @@ function Dashboard({ orders, nav, selOrd }) {
         {stats.map(s => <Crd key={s.l} style={{ textAlign:"center" }}><div style={{ fontSize:34, fontWeight:700, color:s.c }}>{s.v}</div><div style={{ fontSize:12, color:C.sub, marginTop:4 }}>{s.l}</div></Crd>)}
       </div>
       <div>
-        <h3 style={{ color:C.txt, fontSize:16, fontWeight:600, marginBottom:12 }}>🚗 Vehicules en atelier</h3>
+        <h3 style={{ color:C.txt, fontSize:16, fontWeight:600, marginBottom:12 }}>🚗 Véhicules en atelier</h3>
         {active.length===0
-          ? <Crd><p style={{ color:C.mut, textAlign:"center", margin:0 }}>Aucun vehicule en atelier</p></Crd>
+          ? <Crd><p style={{ color:C.mut, textAlign:"center", margin:0 }}>Aucun véhicule en atelier</p></Crd>
           : <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(270px,1fr))", gap:12 }}>
               {active.map(o => <OrdCard key={o.id} o={o} onClick={() => { selOrd(o.id); nav("order-detail"); }}/>)}
             </div>
@@ -554,10 +554,10 @@ function OrdCard({ o, onClick }) {
       </div>
       <div style={{ display:"flex", gap:8, marginBottom:8, flexWrap:"wrap" }}>
         <span style={{ fontSize:11, padding:"2px 8px", borderRadius:999, fontWeight:600, background:isPeda?"#ffedd5":"#dbeafe", color:isPeda?"#9a3412":"#1d4ed8" }}>
-          {isPeda?"🎓 Pedagogique":"👤 Client"}
+          {isPeda?"🎓 Pédagogique":"👤 Client"}
         </span>
         {o.km && <span style={{ fontSize:11, color:C.mut }}>📍 {Number(o.km).toLocaleString("fr-FR")} km</span>}
-        {o.signature && <span style={{ fontSize:11, color:"#059669" }}>✍ Signe</span>}
+        {o.signature && <span style={{ fontSize:11, color:"#059669" }}>✍ Signé</span>}
       </div>
       {tot>0 && (
         <div>
@@ -567,7 +567,7 @@ function OrdCard({ o, onClick }) {
           </div>
         </div>
       )}
-      <div style={{ marginTop:8, fontSize:11, color:C.mut }}>Entree : {fD(o.entryDate)}</div>
+      <div style={{ marginTop:8, fontSize:11, color:C.mut }}>Entrée : {fD(o.entryDate)}</div>
       {isPeda && o.students && <div style={{ marginTop:4, fontSize:11, color:"#c2410c" }}>👥 {o.students}</div>}
     </div>
   );
@@ -586,7 +586,7 @@ function OrdersList({ orders, nav, selOrd }) {
         <Btn onClick={() => nav("new-order")}>+ Nouvel ordre de réparation</Btn>
       </div>
       <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-        {[["active","Actifs"],["en_attente","En attente"],["en_cours","En cours"],["termine","Termines"],["all","Tous"]].map(([v,l]) => (
+        {[["active","Actifs"],["en_attente","En attente"],["en_cours","En cours"],["termine","Terminés"],["all","Tous"]].map(([v,l]) => (
           <button key={v} onClick={() => sf(v)} style={{ padding:"6px 14px", borderRadius:6, cursor:"pointer", fontSize:13, border:"1px solid "+(flt===v?"#2563eb":C.bdr), background:flt===v?C.acc:"transparent", color:flt===v?"#fff":C.sub }}>{l}</button>
         ))}
       </div>
@@ -613,8 +613,8 @@ function OrdersList({ orders, nav, selOrd }) {
                     <div style={{ color:C.sub, fontSize:12 }}>{isPeda?(o.teacher||"—"):(o.clientName||"—")}</div>
                   </div>
                   <div style={{ textAlign:"right", color:C.mut, fontSize:12 }}>
-                    <div>Entree : {fD(o.entryDate)}</div>
-                    <div>{(o.tasks?o.tasks.filter(t=>t.done).length:0)}/{o.tasks?o.tasks.length:0} taches</div>
+                    <div>Entrée : {fD(o.entryDate)}</div>
+                    <div>{(o.tasks?o.tasks.filter(t=>t.done).length:0)}/{o.tasks?o.tasks.length:0} tâches</div>
                   </div>
                 </div>
               );
@@ -677,7 +677,7 @@ function NewOrderForm({ addOrder, teachers, students, user, nav, selOrd, notify 
   const addTask=()=>{if(!f.custTask.trim())return;set("tasks",[...f.tasks,{id:gid(),label:f.custTask.trim(),done:false,doneBy:"",doneAt:""}]);set("custTask","");};
   const togStu=(n)=>set("selStu",f.selStu.includes(n)?f.selStu.filter(s=>s!==n):[...f.selStu,n]);
   const submit=async()=>{
-    if(!f.plate.trim()||!f.brand.trim()||!f.model.trim()){notify("Immatriculation, marque et modele sont obligatoires","error");return;}
+    if(!f.plate.trim()||!f.brand.trim()||!f.model.trim()){notify("Immatriculation, marque et modèle sont obligatoires","error");return;}
     const o={
       fileRef:f.fileRef,
       plate:f.plate.toUpperCase(),brand:f.brand,model:f.model,year:f.year,km:f.km,
@@ -703,45 +703,45 @@ function NewOrderForm({ addOrder, teachers, students, user, nav, selOrd, notify 
         <Btn ghost sm onClick={() => nav("orders")}>← Retour</Btn>
       </div>
       <Crd>
-        <SecTitle>🚗 Vehicule</SecTitle>
+        <SecTitle>🚗 Véhicule</SecTitle>
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))", gap:12 }}>
           <Inp label="Immatriculation *" value={f.plate} onChange={v=>set("plate",v)} placeholder="AB-123-CD"/>
           <Inp label="Marque *" value={f.brand} onChange={v=>set("brand",v)} placeholder="Peugeot"/>
-          <Inp label="Modele *" value={f.model} onChange={v=>set("model",v)} placeholder="308 SW"/>
-          <Inp label="Annee" value={f.year} onChange={v=>set("year",v)} placeholder="2020"/>
-          <Inp label="Kilometrage" value={f.km} onChange={v=>set("km",v)} placeholder="45000"/>
-          <Sel label="Type de vehicule" value={f.vtype} onChange={v=>set("vtype",v)} opts={[{v:"client",l:"👤 Vehicule client"},{v:"peda",l:"🎓 Vehicule pedagogique"}]}/>
+          <Inp label="Modèle *" value={f.model} onChange={v=>set("model",v)} placeholder="308 SW"/>
+          <Inp label="Année" value={f.year} onChange={v=>set("year",v)} placeholder="2020"/>
+          <Inp label="Kilométrage" value={f.km} onChange={v=>set("km",v)} placeholder="45000"/>
+          <Sel label="Type de véhicule" value={f.vtype} onChange={v=>set("vtype",v)} opts={[{v:"client",l:"👤 Véhicule client"},{v:"peda",l:"🎓 Véhicule pédagogique"}]}/>
         </div>
         <SecTitle>📁 Dossier</SecTitle>
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))", gap:12 }}>
           <Inp label="N° d'ordre de réparation" value="Généré automatiquement" onChange={()=>{}} readOnly/>
-          <Inp label="Reference dossier" value={f.fileRef} onChange={v=>set("fileRef",v)} placeholder="REF-2025-001"/>
-          <Inp label="Date d'entree *" value={f.entryDate} onChange={v=>set("entryDate",v)} type="date"/>
-          <Inp label="Heure d'entree *" value={f.entryTime} onChange={v=>set("entryTime",v)} type="time"/>
+          <Inp label="Référence dossier" value={f.fileRef} onChange={v=>set("fileRef",v)} placeholder="REF-2025-001"/>
+          <Inp label="Date d'entrée *" value={f.entryDate} onChange={v=>set("entryDate",v)} type="date"/>
+          <Inp label="Heure d'entrée *" value={f.entryTime} onChange={v=>set("entryTime",v)} type="time"/>
         </div>
         {f.vtype==="client" ? (
           <div>
             <SecTitle>👤 Client</SecTitle>
             <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))", gap:12 }}>
               <Inp label="Nom du client" value={f.clientName} onChange={v=>set("clientName",v)} placeholder="M. Dupont"/>
-              <Inp label="Telephone" value={f.clientPhone} onChange={v=>set("clientPhone",v)} placeholder="06 12 34 56 78"/>
+              <Inp label="Téléphone" value={f.clientPhone} onChange={v=>set("clientPhone",v)} placeholder="06 12 34 56 78"/>
             </div>
           </div>
         ) : (
           <div>
-            <SecTitle>🎓 BTS MV – Affectation pedagogique</SecTitle>
+            <SecTitle>🎓 BTS MV – Affectation pédagogique</SecTitle>
             <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))", gap:12 }}>
               <Sel label="Enseignant responsable" value={f.teacher} onChange={v=>set("teacher",v)} opts={[{v:"",l:"— Choisir —"},...teachers.map(t=>({v:t.name,l:t.name}))]}/>
             </div>
             <div style={{ marginTop:12 }}>
-              <label style={{ fontSize:12, color:C.sub, fontWeight:500, display:"block", marginBottom:8 }}>Eleves affectes (par classe)</label>
+              <label style={{ fontSize:12, color:C.sub, fontWeight:500, display:"block", marginBottom:8 }}>Élèves affectés (par classe)</label>
               <StudentPicker students={students} selected={f.selStu} onToggle={togStu}/>
             </div>
           </div>
         )}
-        <SecTitle>🔍 Motif d'entree</SecTitle>
-        <TA value={f.reason} onChange={v=>set("reason",v)} placeholder="Decrire le motif d'entree..." rows={3}/>
-        <SecTitle>☑️ Travaux a realiser</SecTitle>
+        <SecTitle>🔍 Motif d'entrée</SecTitle>
+        <TA value={f.reason} onChange={v=>set("reason",v)} placeholder="Décrire le motif d'entrée…" rows={3}/>
+        <SecTitle>☑️ Travaux à réaliser</SecTitle>
         <p style={{ color:C.mut, fontSize:12, margin:"0 0 10px" }}>Listez les travaux prevus. Les cases seront <b>cochees par le technicien en atelier</b> au fur et a mesure de la realisation (onglet Travaux de l'ordre).</p>
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(230px,1fr))", gap:8, marginBottom:10 }}>
           {f.tasks.map(t => (
@@ -753,23 +753,23 @@ function NewOrderForm({ addOrder, teachers, students, user, nav, selOrd, notify 
           ))}
         </div>
         <div style={{ display:"flex", gap:8 }}>
-          <input value={f.custTask} onChange={e=>set("custTask",e.target.value)} onKeyDown={e=>{if(e.key==="Enter")addTask();}} placeholder="Ajouter une tache personnalisee..."
+          <input value={f.custTask} onChange={e=>set("custTask",e.target.value)} onKeyDown={e=>{if(e.key==="Enter")addTask();}} placeholder="Ajouter une tâche personnalisée…"
             style={{ flex:1, background:"#f1f5f9", border:"1px solid "+C.bdr, borderRadius:6, padding:"8px 10px", color:C.txt, fontSize:13, outline:"none", fontFamily:"inherit" }}/>
           <Btn sm onClick={addTask}>+ Ajouter</Btn>
         </div>
         <SecTitle>📝 Notes</SecTitle>
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))", gap:12 }}>
-          <TA label="Observations a signaler au client" value={f.observations} onChange={v=>set("observations",v)} placeholder="Anomalies constatees..."/>
-          <TA label="Ventes additionnelles a prevoir" value={f.additionalSales} onChange={v=>set("additionalSales",v)} placeholder="Pieces, accessoires..."/>
+          <TA label="Observations à signaler au client" value={f.observations} onChange={v=>set("observations",v)} placeholder="Anomalies constatées…"/>
+          <TA label="Ventes additionnelles à prévoir" value={f.additionalSales} onChange={v=>set("additionalSales",v)} placeholder="Pièces, accessoires…"/>
         </div>
         <SecTitle>✍ Signature du client (accord pour les travaux)</SecTitle>
         <div style={{ background:"#f1f5f9", borderRadius:10, padding:16, border:"1px solid "+C.bdr }}>
-          <p style={{ color:C.sub, fontSize:12, marginBottom:12 }}>Le client certifie avoir pris connaissance des travaux a realiser et donne son accord.</p>
+          <p style={{ color:C.sub, fontSize:12, marginBottom:12 }}>Le client certifie avoir pris connaissance des travaux à réaliser et donne son accord.</p>
           {f.signature ? (
             <div>
               <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:8 }}>
-                <span style={{ color:"#059669", fontSize:13, fontWeight:600 }}>✅ Signature enregistree</span>
-                <Btn sm ghost onClick={()=>set("signature","")}>Resigner</Btn>
+                <span style={{ color:"#059669", fontSize:13, fontWeight:600 }}>✅ Signature enregistrée</span>
+                <Btn sm ghost onClick={()=>set("signature","")}>Refaire la signature</Btn>
               </div>
               <img src={f.signature} alt="Signature" style={{ maxHeight:80, background:"#fff", borderRadius:6, padding:4, display:"block" }}/>
             </div>
@@ -812,9 +812,9 @@ function OrderDetail({ orderId, orders, editOrder, removeOrder, isAdmin, user, n
           <h2 style={{color:C.txt,fontSize:20,fontWeight:700,margin:0}}>{o.orderNum} – {o.plate}</h2>
           <div style={{display:"flex",gap:8,marginTop:6,flexWrap:"wrap",alignItems:"center"}}>
             <Badge status={o.status}/>
-            <span style={{fontSize:12,fontWeight:600,color:isPeda?"#c2410c":"#1d4ed8"}}>{isPeda?"🎓 Pedagogique":"👤 Client"}</span>
+            <span style={{fontSize:12,fontWeight:600,color:isPeda?"#c2410c":"#1d4ed8"}}>{isPeda?"🎓 Pédagogique":"👤 Client"}</span>
             <span style={{fontSize:13,color:C.sub}}>{o.brand} {o.model} {o.year?"("+o.year+")":""}</span>
-            {o.signature&&<span style={{fontSize:12,color:"#059669"}}>✍ Signe</span>}
+            {o.signature&&<span style={{fontSize:12,color:"#059669"}}>✍ Signé</span>}
           </div>
         </div>
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
@@ -822,15 +822,15 @@ function OrderDetail({ orderId, orders, editOrder, removeOrder, isAdmin, user, n
           {isStaff&&<Btn sm ghost onClick={()=>archiveToDrive(o,notify)} style={{borderColor:"#16a34a",color:"#059669"}}>📁 Archiver Drive</Btn>}
           {isStaff&&o.status!=="termine"&&(
             <>
-              {o.status==="en_attente"&&<Btn sm onClick={()=>{upd({status:"en_cours"});notify("Intervention demarree");}}>▶ Demarrer</Btn>}
+              {o.status==="en_attente"&&<Btn sm onClick={()=>{upd({status:"en_cours"});notify("Intervention démarrée");}}>▶ Démarrer</Btn>}
             </>
           )}
         </div>
       </div>
       <Crd style={{marginBottom:12}}>
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:12,fontSize:13}}>
-          {[{k:"N° OR",v:o.orderNum},{k:"Ref. dossier",v:o.fileRef||"—"},{k:"Entree",v:fD(o.entryDate)+" "+o.entryTime},{k:isPeda?"Enseignant":"Client",v:isPeda?(o.teacher||"—"):(o.clientName||"—")}]
-            .concat(o.clientPhone?[{k:"Tel.",v:o.clientPhone}]:[],o.students?[{k:"Eleves",v:o.students}]:[],[{k:"Avancement",v:dn+"/"+tot+" ("+pct+"%)"}])
+          {[{k:"N° OR",v:o.orderNum},{k:"Réf. dossier",v:o.fileRef||"—"},{k:"Entrée",v:fD(o.entryDate)+" "+o.entryTime},{k:isPeda?"Enseignant":"Client",v:isPeda?(o.teacher||"—"):(o.clientName||"—")}]
+            .concat(o.clientPhone?[{k:"Tel.",v:o.clientPhone}]:[],o.students?[{k:"Élèves",v:o.students}]:[],[{k:"Avancement",v:dn+"/"+tot+" ("+pct+"%)"}])
             .map(item=>(
               <div key={item.k}>
                 <div style={{color:C.mut,fontSize:11,marginBottom:2}}>{item.k}</div>
@@ -875,7 +875,7 @@ function OrderDetail({ orderId, orders, editOrder, removeOrder, isAdmin, user, n
           ))}
           {canEdit&&o.status!=="termine"&&(
             <div style={{display:"flex",gap:8,marginTop:4}}>
-              <input value={newTask} onChange={e=>snt(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")addT();}} placeholder="Ajouter une tache..."
+              <input value={newTask} onChange={e=>snt(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")addT();}} placeholder="Ajouter une tâche…"
                 style={{flex:1,background:"#f1f5f9",border:"1px solid "+C.bdr,borderRadius:6,padding:"8px 10px",color:C.txt,fontSize:13,outline:"none",fontFamily:"inherit"}}/>
               <Btn sm onClick={addT}>+</Btn>
             </div>
@@ -884,8 +884,8 @@ function OrderDetail({ orderId, orders, editOrder, removeOrder, isAdmin, user, n
       )}
       {tab==="notes"&&(
         <div style={{display:"flex",flexDirection:"column",gap:14}}>
-          <TA label="👁 Observations a signaler au client" value={obs} onChange={canEdit?setObs:null} onBlur={canEdit?()=>{if(obs!==(o.observations||""))upd({observations:obs});}:null} readOnly={!canEdit} placeholder={canEdit?"Anomalies constatees...":"Aucune observation"} rows={4}/>
-          <TA label="🛒 Ventes additionnelles a prevoir" value={adds} onChange={canEdit?setAdds:null} onBlur={canEdit?()=>{if(adds!==(o.additionalSales||""))upd({additionalSales:adds});}:null} readOnly={!canEdit} placeholder={canEdit?"Pieces, accessoires...":"Aucune"} rows={4}/>
+          <TA label="👁 Observations à signaler au client" value={obs} onChange={canEdit?setObs:null} onBlur={canEdit?()=>{if(obs!==(o.observations||""))upd({observations:obs});}:null} readOnly={!canEdit} placeholder={canEdit?"Anomalies constatées…":"Aucune observation"} rows={4}/>
+          <TA label="🛒 Ventes additionnelles à prévoir" value={adds} onChange={canEdit?setAdds:null} onBlur={canEdit?()=>{if(adds!==(o.additionalSales||""))upd({additionalSales:adds});}:null} readOnly={!canEdit} placeholder={canEdit?"Pièces, accessoires…":"Aucune"} rows={4}/>
         </div>
       )}
       {tab==="sig"&&(
@@ -899,16 +899,16 @@ function OrderDetail({ orderId, orders, editOrder, removeOrder, isAdmin, user, n
               <div style={{color:C.mut,fontSize:12,marginTop:8}}>Signataire : {isPeda?(o.teacher||"—"):(o.clientName||"—")}</div>
             </div>
           ):(
-            <div style={{color:"#f59e0b",fontSize:13}}>⚠️ Aucune signature enregistree pour cet ordre de réparation.</div>
+            <div style={{color:"#f59e0b",fontSize:13}}>⚠️ Aucune signature enregistrée pour cet ordre de réparation.</div>
           )}
         </Crd>
       )}
       {tab==="exit"&&o.exitDate&&(
         <Crd>
-          <h3 style={{color:"#059669",fontSize:15,fontWeight:700,marginBottom:12}}>🚪 Sortie enregistree</h3>
+          <h3 style={{color:"#059669",fontSize:15,fontWeight:700,marginBottom:12}}>🚪 Sortie enregistrée</h3>
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:12,fontSize:13}}>
             <div><div style={{color:C.mut,fontSize:11}}>Date de sortie</div><div style={{color:C.txt}}>{fD(o.exitDate)} a {o.exitTime}</div></div>
-            <div><div style={{color:C.mut,fontSize:11}}>Etat a la sortie</div><div style={{color:C.txt}}>{o.exitCondition||"—"}</div></div>
+            <div><div style={{color:C.mut,fontSize:11}}>État à la sortie</div><div style={{color:C.txt}}>{o.exitCondition||"—"}</div></div>
           </div>
         </Crd>
       )}
@@ -947,7 +947,7 @@ function ExitModal({ o, onOk, onClose }) {
           <Inp label="Heure de sortie" value={f.exitTime} onChange={v=>set("exitTime",v)} type="time"/>
         </div>
         <div style={{marginBottom:20}}>
-          <TA label="Etat du vehicule a la sortie" value={f.exitCondition} onChange={v=>set("exitCondition",v)} placeholder="Propre, reparation effectuee, client informe..." rows={3}/>
+          <TA label="État du véhicule à la sortie" value={f.exitCondition} onChange={v=>set("exitCondition",v)} placeholder="Propre, réparation effectuée, client informé…" rows={3}/>
         </div>
         <div style={{display:"flex",justifyContent:"flex-end",gap:10}}>
           <Btn ghost onClick={onClose}>Annuler</Btn>
@@ -980,7 +980,7 @@ function HistoryView({ orders, documents, nav, selOrd, openDoc }) {
         style={{background:C.card,border:"1px solid "+C.bdr,borderRadius:8,padding:"10px 14px",color:C.txt,fontSize:13,outline:"none"}}/>
       {tab==="orders" ? (
         ords.length===0
-          ?<Crd><p style={{color:C.mut,textAlign:"center",margin:0}}>Aucune intervention enregistree</p></Crd>
+          ?<Crd><p style={{color:C.mut,textAlign:"center",margin:0}}>Aucune intervention enregistrée</p></Crd>
           :<div style={{display:"flex",flexDirection:"column",gap:8}}>
             {ords.map(o=>{const isPeda=o.vtype==="peda";return(
               <div key={o.id} onClick={()=>{selOrd(o.id);nav("order-detail");}}
@@ -997,7 +997,7 @@ function HistoryView({ orders, documents, nav, selOrd, openDoc }) {
                   <div style={{color:C.sub,fontSize:12}}>{isPeda?(o.teacher||"—"):(o.clientName||"—")}</div>
                 </div>
                 <div style={{textAlign:"right",color:C.mut,fontSize:12}}>
-                  <div>Entree : {fD(o.entryDate)}</div>
+                  <div>Entrée : {fD(o.entryDate)}</div>
                   {o.exitDate&&<div>Sortie : {fD(o.exitDate)}</div>}
                 </div>
               </div>
@@ -1065,9 +1065,9 @@ function AdminPanel({ students, staff, orders, isAdmin, notify, reloadStudents, 
   };
   const stats=[
     {l:"Total interventions",v:orders.length,c:"#2563eb"},{l:"En attente",v:orders.filter(o=>o.status==="en_attente").length,c:"#f59e0b"},
-    {l:"En cours",v:orders.filter(o=>o.status==="en_cours").length,c:"#3b82f6"},{l:"Terminees",v:orders.filter(o=>o.status==="termine").length,c:"#059669"},
-    {l:"Clients",v:orders.filter(o=>o.vtype==="client").length,c:"#a78bfa"},{l:"Pedagogiques",v:orders.filter(o=>o.vtype==="peda").length,c:"#fb923c"},
-    {l:"Signes",v:orders.filter(o=>o.signature).length,c:"#059669"},{l:"Staff",v:staff.length,c:C.txt},{l:"Eleves",v:students.length,c:"#15803d"},
+    {l:"En cours",v:orders.filter(o=>o.status==="en_cours").length,c:"#3b82f6"},{l:"Terminées",v:orders.filter(o=>o.status==="termine").length,c:"#059669"},
+    {l:"Clients",v:orders.filter(o=>o.vtype==="client").length,c:"#a78bfa"},{l:"Pédagogiques",v:orders.filter(o=>o.vtype==="peda").length,c:"#fb923c"},
+    {l:"Signés",v:orders.filter(o=>o.signature).length,c:"#059669"},{l:"Staff",v:staff.length,c:C.txt},{l:"Élèves",v:students.length,c:"#15803d"},
   ];
   const addStu=async()=>{
     if(!nu.name.trim()){notify("Le nom de l'élève est obligatoire","error");return;}
@@ -1302,14 +1302,14 @@ function DocForm({ kind, initial, orders, documents, addDocument, editDocument, 
         <SecTitle>👤 Client</SecTitle>
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:12}}>
           <Inp label="Nom du client *" value={d.clientName} onChange={v=>set("clientName",v)} placeholder="M. Dupont"/>
-          <Inp label="Telephone" value={d.clientPhone} onChange={v=>set("clientPhone",v)} placeholder="06 12 34 56 78"/>
+          <Inp label="Téléphone" value={d.clientPhone} onChange={v=>set("clientPhone",v)} placeholder="06 12 34 56 78"/>
         </div>
-        <SecTitle>🚗 Vehicule</SecTitle>
+        <SecTitle>🚗 Véhicule</SecTitle>
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:12}}>
           <Inp label="Immatriculation" value={d.plate} onChange={v=>set("plate",v)} placeholder="AB-123-CD"/>
           <Inp label="Marque" value={d.brand} onChange={v=>set("brand",v)}/>
-          <Inp label="Modele" value={d.model} onChange={v=>set("model",v)}/>
-          <Inp label="Annee" value={d.year} onChange={v=>set("year",v)}/>
+          <Inp label="Modèle" value={d.model} onChange={v=>set("model",v)}/>
+          <Inp label="Année" value={d.year} onChange={v=>set("year",v)}/>
           <Inp label="Km" value={d.km} onChange={v=>set("km",v)}/>
         </div>
         <SecTitle>📋 Lignes (prestations / pièces)</SecTitle>
@@ -1351,7 +1351,7 @@ function DocForm({ kind, initial, orders, documents, addDocument, editDocument, 
                 <div>
                   <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:8}}>
                     <span style={{color:"#059669",fontSize:13,fontWeight:600}}>✅ Signée</span>
-                    <Btn sm ghost onClick={()=>set("signature","")}>Resigner</Btn>
+                    <Btn sm ghost onClick={()=>set("signature","")}>Refaire la signature</Btn>
                   </div>
                   <img src={d.signature} alt="Signature" style={{maxHeight:80,background:"#fff",borderRadius:6,padding:4,display:"block"}}/>
                 </div>

@@ -57,6 +57,12 @@ create table if not exists orders (
   observations      text default '',
   additional_sales  text default '',
   signature         text default '',                    -- dataURL PNG du canvas
+  -- OR « véhicule électrique / hybride » (NULL = OR standard) :
+  -- { energy, vin, firstReg, clientAddress, clientEmail, clientContact,
+  --   opType: non_elec|hors_tension|voisinage|sous_tension,
+  --   quoteAmount, returnDate, returnTime,
+  --   steps: { b2vl|consign|interrupt|resume|endwork|deconsign : {name,date,time,visa} } }
+  ev                jsonb,
   created_by        text default '',
   created_at        timestamptz default now(),
   updated_at        timestamptz default now()
@@ -254,6 +260,11 @@ create policy upd_documents  on documents for update using (is_staff() or create
 create policy del_documents  on documents for delete using (is_admin());
 
 alter publication supabase_realtime add table documents;
+
+-- ----------------------------------------------------------------------------
+-- MIGRATION (bases déjà en service) : traçabilité VE/VH
+--   alter table orders add column if not exists ev jsonb;
+-- ----------------------------------------------------------------------------
 
 -- ============================================================================
 -- APRÈS EXÉCUTION :

@@ -31,6 +31,8 @@ export function rowToOrder(r) {
     tasks: Array.isArray(r.tasks) ? r.tasks : [],
     observations: r.observations || "", additionalSales: r.additional_sales || "",
     signature: r.signature || "",
+    // OR « véhicule électrique / hybride » : null sur un OR standard
+    ev: r.ev || null,
     createdBy: r.created_by || "",
     createdAt: r.created_at,
   };

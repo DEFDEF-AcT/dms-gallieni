@@ -10,7 +10,8 @@ import {
 } from "./data";
 
 // Montants / TVA
-const eur = (n) => (Number(n) || 0).toLocaleString("fr-FR", { style: "currency", currency: "EUR" });
+const num = (v) => { const n = Number(String(v ?? "").replace(/\s/g, "").replace(",", ".")); return Number.isFinite(n) ? n : 0; };
+const eur = (n) => num(n).toLocaleString("fr-FR", { style: "currency", currency: "EUR" });
 function docTotals(doc) {
   const ht = (doc.items || []).reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.unitPrice) || 0), 0);
   const tva = ht * (Number(doc.tvaRate) || 0) / 100;
@@ -61,13 +62,58 @@ const fD    = (d) => d ? new Date(d).toLocaleDateString("fr-FR") : "—";
 const esc   = (s) => String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
 
 const TASKS0 = [
-  "Vidange moteur + filtre huile","Remplacement filtre a air",
-  "Controle plaquettes frein AV","Controle plaquettes frein AR",
-  "Controle niveaux","Diagnostic electronique OBD",
-  "Controle pneumatiques","Controle eclairage / signalisation",
-  "Controle batterie / charge","Climatisation controle / recharge",
-  "Remplacement courroie distribution","Controle geometrie",
+  "Vidange moteur + filtre à huile","Remplacement filtre à air",
+  "Contrôle plaquettes frein AV","Contrôle plaquettes frein AR",
+  "Contrôle des niveaux","Diagnostic électronique OBD",
+  "Contrôle pneumatiques","Contrôle éclairage / signalisation",
+  "Contrôle batterie / charge","Climatisation : contrôle / recharge",
+  "Remplacement courroie de distribution","Contrôle géométrie",
 ];
+
+// ── Véhicules électriques / hybrides (VE/VH) ────────────────────────────────
+// Trame « OR VE VH » : §5 « Type d'opération » + traçabilité de la mise en
+// sécurité électrique de la batterie de traction (consignation BCL).
+// Un OR standard porte `ev = null` ; un OR VE/VH porte l'objet ci-dessous.
+const EV_ENERGIES = [
+  "", "Électrique (EL)", "Hybride rechargeable (EE / GL)",
+  "Hybride non rechargeable (EH / GH)", "Hydrogène – pile à combustible (H2)", "Autre",
+];
+const EV_OPS = [
+  { v:"non_elec",     l:"Opération non électrique",            s:"Aucune intervention sur le circuit haute tension.",   col:"#15803d", bg:"#dcfce7" },
+  { v:"hors_tension", l:"Opération électrique – hors tension", s:"Consignation obligatoire avant toute intervention.",  col:"#1d4ed8", bg:"#dbeafe" },
+  { v:"voisinage",    l:"Opération électrique – au voisinage", s:"Zone de voisinage HT : habilitation B2VL requise.",   col:"#b45309", bg:"#fef3c7" },
+  { v:"sous_tension", l:"Opération électrique – sous tension", s:"Opération à haut risque : encadrement obligatoire.",  col:"#b91c1c", bg:"#fee2e2" },
+];
+const evOp = (v) => EV_OPS.find(o => o.v === v) || EV_OPS[0];
+// Les 6 lignes de traçabilité de la trame, dans l'ordre chronologique.
+const EV_STEPS = [
+  { id:"b2vl",      lbl:"Chargé de travaux B2VL",               who:"Chargé de travaux (B2VL)",
+    txt:"est désigné pour conduire l'intervention et encadrer le personnel." },
+  { id:"consign",   lbl:"Consignation / Mise hors tension",     who:"Chargé de consignation (BCL)",
+    txt:"atteste avoir consigné / mis hors tension le véhicule désigné." },
+  { id:"interrupt", lbl:"Interruption des travaux",
+    txt:"Le chargé de travaux avise que les travaux sont interrompus et que son personnel est informé." },
+  { id:"resume",    lbl:"Reprise des travaux",
+    txt:"Le chargé de travaux avise que les travaux sont repris et que son personnel est informé." },
+  { id:"endwork",   lbl:"Fin de travaux",
+    txt:"Le chargé de travaux avise que les travaux sont terminés et que son personnel est informé." },
+  { id:"deconsign", lbl:"Déconsignation / Remise sous tension", who:"Chargé de consignation (BCL)",
+    txt:"atteste avoir déconsigné / remis sous tension le véhicule désigné." },
+];
+const evStep0 = () => ({ name:"", date:"", time:"", visa:"" });
+const EV0 = () => ({
+  energy:"", vin:"", firstReg:"",
+  clientAddress:"", clientEmail:"", clientContact:"",
+  opType:"non_elec", quoteAmount:"", returnDate:"", returnTime:"",
+  steps: EV_STEPS.reduce((a, st) => { a[st.id] = evStep0(); return a; }, {}),
+});
+const evStep  = (ev, id) => (ev && ev.steps && ev.steps[id]) || evStep0();
+const evDone  = (st) => !!(st && (st.date || st.visa));
+// Consigné mais pas encore déconsigné → la batterie de traction est hors tension.
+const evOpen  = (ev) => !!ev && ev.opType !== "non_elec" && evDone(evStep(ev,"consign")) && !evDone(evStep(ev,"deconsign"));
+// Opération électrique dont la consignation n'est pas horodatée → interdiction d'intervenir.
+const evTodo  = (ev) => !!ev && ev.opType !== "non_elec" && !evDone(evStep(ev,"consign"));
+const evWhen  = (st) => evDone(st) ? fD(st.date) + (st.time ? " à " + st.time : "") : "";
 
 // ── Données Supabase (remplace localStorage) ──
 // Collection générique : fetch initial + abonnement realtime (refetch sur
@@ -161,7 +207,8 @@ function csvExport(rows, fname) {
   const a = document.createElement("a"); a.href = URL.createObjectURL(b); a.download = fname; a.click();
 }
 function toCSV(orders) {
-  const H = ["N° OR","Réf.","Immat.","Marque","Modèle","Année","KM","Type","Client/Enseignant","Élèves","Motif","Date d'entrée","Heure","Date de sortie","Statut","Tâches OK","Tâches total","Observations","Ventes add.","Signature accord","Créé par"];
+  const H = ["N° OR","Réf.","Immat.","Marque","Modèle","Année","KM","Type","Client/Enseignant","Élèves","Motif","Date d'entrée","Heure","Date de sortie","Statut","Tâches OK","Tâches total","Observations","Ventes add.","Signature accord","Créé par",
+             "VE/VH","Énergie","VIN","Type d'opération","Consignation","Déconsignation"];
   return [H, ...orders.map(o => [
     o.orderNum, o.fileRef||"", o.plate, o.brand, o.model, o.year||"", o.km||"",
     o.vtype==="peda"?"Pédagogique":"Client",
@@ -169,7 +216,9 @@ function toCSV(orders) {
     o.students||"", o.reason||"", fD(o.entryDate), o.entryTime||"", fD(o.exitDate),
     VS[o.status]?VS[o.status].label:"",
     o.tasks?o.tasks.filter(t=>t.done).length:0, o.tasks?o.tasks.length:0,
-    o.observations||"", o.additionalSales||"", o.signature?"Oui":"Non", o.createdBy||""
+    o.observations||"", o.additionalSales||"", o.signature?"Oui":"Non", o.createdBy||"",
+    o.ev?"Oui":"Non", o.ev?.energy||"", o.ev?.vin||"", o.ev?evOp(o.ev.opType).l:"",
+    o.ev?evWhen(evStep(o.ev,"consign")):"", o.ev?evWhen(evStep(o.ev,"deconsign")):""
   ])];
 }
 
@@ -179,9 +228,40 @@ function orderHTML(order) {
   const sLabel = VS[order.status] ? VS[order.status].label : "En attente";
   const sColor = order.status==="termine" ? "#065f46" : order.status==="en_cours" ? "#1e40af" : "#92400e";
   const sBg    = order.status==="termine" ? "#d1fae5" : order.status==="en_cours" ? "#dbeafe" : "#fef3c7";
-  const tasksHTML = (order.tasks||[]).map((t,i) =>
-    `<div class="ti${i%2===1?" odd":""}"><div class="cb${t.done?" ck":""}">${t.done?"&#10003;":""}</div><span${t.done?" class=\"td\"":" "}>${esc(t.label)}</span>${t.done&&t.doneBy?`<span class="tby">${esc(t.doneBy)}</span>`:""}</div>`
-  ).join("");
+  const ev = order.ev || null;
+  const tasksHTML = ev
+    ? `<table class="wk"><thead><tr><th class="c" style="width:9%">Rep.</th><th>Désignation des travaux</th><th class="c" style="width:17%">Temps estimé</th><th class="r" style="width:17%">Montant HT</th></tr></thead><tbody>${
+        (order.tasks||[]).map((t,i) =>
+          `<tr${i%2?' style="background:#f9f9f9"':''}><td class="c">${i+1}</td><td>${t.done?'<span class="ok">&#10003;</span> ':""}${esc(t.label)}${t.done&&t.doneBy?` <span class="tby">(${esc(t.doneBy)})</span>`:""}</td><td class="c">${esc(t.est||"")}</td><td class="r">${t.amount?eur(t.amount):""}</td></tr>`
+        ).join("") || `<tr><td colspan="4" style="color:#999">Aucun travail demandé</td></tr>`
+      }</tbody></table>`
+    : `<div class="tasks">${(order.tasks||[]).map((t,i) =>
+        `<div class="ti${i%2===1?" odd":""}"><div class="cb${t.done?" ck":""}">${t.done?"&#10003;":""}</div><span${t.done?" class=\"td\"":" "}>${esc(t.label)}</span>${t.done&&t.doneBy?`<span class="tby">${esc(t.doneBy)}</span>`:""}</div>`
+      ).join("")}</div>`;
+  // §5 de la trame : type d'opération + traçabilité de la mise en sécurité électrique
+  const evBlock = !ev ? "" : (() => {
+    const cell = (on) => `<td class="oc${on?" on":""}">${on?"&#10003;":""}</td>`;
+    const rows = EV_STEPS.map(st => {
+      const v = evStep(ev, st.id);
+      const who = st.who ? `<b>${esc(v.name||"………………………………")}</b> ` : "";
+      return `<tr><td class="el">${esc(st.lbl)}</td><td>${who}${esc(st.txt)}</td>`
+        + `<td class="c">${v.date?fD(v.date):"…… / …… / ……"}${v.time?"<br>à "+esc(v.time):""}</td>`
+        + `<td class="c vz">${esc(v.visa||"")}</td></tr>`;
+    }).join("");
+    return `<div class="sec"><div class="sh">Type d'opération pour véhicule électrique ou hybride</div>
+      <table class="opt"><thead>
+        <tr><th rowspan="2" style="width:25%">Opération non électrique</th><th colspan="3">Opération électrique</th></tr>
+        <tr><th style="width:25%">Hors tension</th><th style="width:25%">Au voisinage</th><th style="width:25%">Sous tension</th></tr></thead>
+        <tbody><tr>${cell(ev.opType==="non_elec")}${cell(ev.opType==="hors_tension")}${cell(ev.opType==="voisinage")}${cell(ev.opType==="sous_tension")}</tr></tbody></table>
+      <table class="trc"><thead><tr><th style="width:24%">Étape</th><th>Attestation</th><th class="c" style="width:19%">Date / Heure</th><th class="c" style="width:13%">Visa</th></tr></thead><tbody>${rows}</tbody></table>
+    </div>`;
+  })();
+  // §6 de la trame : engagement et accord (montant annoncé, restitution)
+  const engBlock = !ev ? "" : `<div class="sec"><div class="sh">Engagement et accord</div><div class="grid g3">
+      <div><div class="lb">Montant prévisionnel annoncé</div><div class="vl">${ev.quoteAmount?esc(ev.quoteAmount)+" € TTC":"—"}</div></div>
+      <div><div class="lb">Restitution convenue le</div><div class="vl">${ev.returnDate?fD(ev.returnDate):"—"}${ev.returnTime?" à "+esc(ev.returnTime):""}</div></div>
+      <div><div class="lb">Dépassement</div><div class="vl" style="font-weight:normal;">Rappel du client avant tout dépassement</div></div>
+    </div></div>`;
   const sigHTML = order.signature
     ? `<img src="${order.signature}" style="max-height:72px;max-width:100%;display:block;margin:auto;"/>`
     : `<div style="font-size:11px;color:#bbb;text-align:center;line-height:80px;">Non signée</div>`;
@@ -204,12 +284,17 @@ function orderHTML(order) {
       <div class="grid g2">
         <div><div class="lb">Nom du client</div><div class="vl">${esc(order.clientName||"—")}</div></div>
         <div><div class="lb">Téléphone</div><div class="vl">${esc(order.clientPhone||"—")}</div></div>
-      </div>
+      </div>${ev?`
+      <div class="grid g3" style="margin-top:6px;">
+        <div><div class="lb">Adresse</div><div class="vl">${esc(ev.clientAddress||"—")}</div></div>
+        <div><div class="lb">Adresse électronique</div><div class="vl">${esc(ev.clientEmail||"—")}</div></div>
+        <div><div class="lb">Moyen de contact retenu</div><div class="vl">${esc(ev.clientContact||"—")}</div></div>
+      </div>`:""}
     </div>`;
   const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(order.orderNum)}</title>
-<style>*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#111;background:#fff;}.page{padding:12mm 15mm;max-width:210mm;margin:0 auto;}.hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #1d4ed8;padding-bottom:10px;margin-bottom:14px;}.bn{font-size:20px;font-weight:bold;color:#1d4ed8;}.bs{font-size:10px;color:#555;margin-top:2px;}.on{font-size:22px;font-weight:bold;color:#1d4ed8;text-align:right;}.om{font-size:10px;color:#555;text-align:right;margin-top:2px;}.sec{margin-bottom:10px;}.sh{background:#1d4ed8;color:#fff;padding:4px 10px;font-size:11px;font-weight:bold;margin-bottom:6px;}.grid{display:grid;gap:6px 10px;}.g2{grid-template-columns:1fr 1fr;}.g3{grid-template-columns:1fr 1fr 1fr;}.g5{grid-template-columns:repeat(5,1fr);}.lb{font-size:9px;color:#888;text-transform:uppercase;letter-spacing:.4px;margin-bottom:2px;}.vl{font-size:12px;font-weight:bold;border-bottom:1px solid #ccc;padding-bottom:2px;min-height:17px;}.bdg{display:inline-block;padding:2px 10px;border-radius:20px;font-size:10px;font-weight:bold;}.tasks{display:grid;grid-template-columns:1fr 1fr;gap:0;}.ti{display:flex;align-items:center;gap:6px;padding:4px 5px;border-bottom:1px dotted #e5e5e5;font-size:11px;}.ti.odd{background:#f9f9f9;}.cb{width:13px;height:13px;border:1.5px solid #555;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;font-size:10px;font-weight:bold;}.ck{border-color:#059669;background:#d1fae5;color:#059669;}.td{color:#059669;text-decoration:line-through;}.tby{margin-left:auto;font-size:9px;color:#888;white-space:nowrap;}.tb{border:1px solid #ddd;padding:6px 8px;min-height:52px;font-size:11px;line-height:1.5;white-space:pre-wrap;}.sr{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:16px;padding-top:12px;border-top:2px solid #1d4ed8;}.sl{font-size:10px;color:#333;font-weight:bold;margin-bottom:5px;}.sb{border:1px solid #999;height:82px;display:flex;align-items:center;justify-content:center;background:#fafafa;overflow:hidden;}.sn{font-size:9px;color:#888;text-align:center;margin-top:3px;}.foot{margin-top:14px;padding-top:8px;border-top:1px solid #ddd;font-size:9px;color:#aaa;text-align:center;}.twocol{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}.page{padding:8mm 12mm;}}</style>
+<style>*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#111;background:#fff;}.page{padding:12mm 15mm;max-width:210mm;margin:0 auto;}.hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #1d4ed8;padding-bottom:10px;margin-bottom:14px;}.bn{font-size:20px;font-weight:bold;color:#1d4ed8;}.bs{font-size:10px;color:#555;margin-top:2px;}.on{font-size:22px;font-weight:bold;color:#1d4ed8;text-align:right;}.om{font-size:10px;color:#555;text-align:right;margin-top:2px;}.sec{margin-bottom:10px;}.sh{background:#1d4ed8;color:#fff;padding:4px 10px;font-size:11px;font-weight:bold;margin-bottom:6px;}.grid{display:grid;gap:6px 10px;}.g2{grid-template-columns:1fr 1fr;}.g3{grid-template-columns:1fr 1fr 1fr;}.g5{grid-template-columns:repeat(5,1fr);}.lb{font-size:9px;color:#888;text-transform:uppercase;letter-spacing:.4px;margin-bottom:2px;}.vl{font-size:12px;font-weight:bold;border-bottom:1px solid #ccc;padding-bottom:2px;min-height:17px;}.bdg{display:inline-block;padding:2px 10px;border-radius:20px;font-size:10px;font-weight:bold;}.tasks{display:grid;grid-template-columns:1fr 1fr;gap:0;}.ti{display:flex;align-items:center;gap:6px;padding:4px 5px;border-bottom:1px dotted #e5e5e5;font-size:11px;}.ti.odd{background:#f9f9f9;}.cb{width:13px;height:13px;border:1.5px solid #555;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;font-size:10px;font-weight:bold;}.ck{border-color:#059669;background:#d1fae5;color:#059669;}.td{color:#059669;text-decoration:line-through;}.tby{margin-left:auto;font-size:9px;color:#888;white-space:nowrap;}.tb{border:1px solid #ddd;padding:6px 8px;min-height:52px;font-size:11px;line-height:1.5;white-space:pre-wrap;}.sr{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:16px;padding-top:12px;border-top:2px solid #1d4ed8;}.sl{font-size:10px;color:#333;font-weight:bold;margin-bottom:5px;}.sb{border:1px solid #999;height:82px;display:flex;align-items:center;justify-content:center;background:#fafafa;overflow:hidden;}.sn{font-size:9px;color:#888;text-align:center;margin-top:3px;}.foot{margin-top:14px;padding-top:8px;border-top:1px solid #ddd;font-size:9px;color:#aaa;text-align:center;}.twocol{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;}.warn{border:1.5px solid #b91c1c;background:#fef2f2;color:#b91c1c;padding:6px 10px;font-size:10.5px;font-weight:bold;margin-bottom:10px;}table.opt,table.trc,table.wk{width:100%;border-collapse:collapse;font-size:10.5px;}table.opt th,table.trc th,table.wk th{background:#1d4ed8;color:#fff;padding:4px 6px;font-size:9.5px;text-align:left;border:1px solid #1d4ed8;}table.opt td,table.trc td,table.wk td{border:1px solid #ccc;padding:4px 6px;vertical-align:top;}table.opt{margin-bottom:6px;}table.opt th{text-align:center;}.oc{height:24px;text-align:center;font-size:15px;font-weight:bold;color:#111;}.oc.on{background:#dbeafe;color:#1d4ed8;}.trc .el{font-weight:bold;background:#f4f7ff;}.trc .vz{background:#fafafa;}td.c,th.c{text-align:center;}td.r,th.r{text-align:right;}.wk .ok{color:#059669;font-weight:bold;}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}.page{padding:8mm 12mm;}}</style>
 </head><body><div class="page">
-<div class="hdr"><div><div class="bn">Lycée Gallieni</div><div class="bs">Atelier BTS Maintenance des Véhicules</div><div class="bs" style="font-weight:bold;margin-top:5px;font-size:12px;">ORDRE DE RÉPARATION</div></div>
+<div class="hdr"><div><div class="bn">Lycée Gallieni</div><div class="bs">Atelier BTS Maintenance des Véhicules</div><div class="bs" style="font-weight:bold;margin-top:5px;font-size:12px;">ORDRE DE RÉPARATION${ev?" – VÉHICULE ÉLECTRIQUE / HYBRIDE":""}</div></div>
 <div><div class="on">${esc(order.orderNum)}</div><div class="om">Réf. dossier : ${esc(order.fileRef||"—")}</div><div class="om">Entrée le ${fD(order.entryDate)} à ${esc(order.entryTime||"—")}</div><div class="om">Créé par : ${esc(order.createdBy||"—")}</div>
 <div class="om" style="margin-top:5px;"><span style="background:${sBg};color:${sColor};padding:2px 10px;border-radius:20px;font-size:10px;font-weight:bold;">${sLabel}</span></div></div></div>
 <div class="sec"><div class="sh">Véhicule</div><div class="grid g5">
@@ -217,19 +302,26 @@ function orderHTML(order) {
 <div><div class="lb">Marque</div><div class="vl">${esc(order.brand)}</div></div>
 <div><div class="lb">Modèle</div><div class="vl">${esc(order.model)}</div></div>
 <div><div class="lb">Année</div><div class="vl">${esc(order.year||"—")}</div></div>
-<div><div class="lb">Kilométrage</div><div class="vl">${order.km?esc(order.km)+" km":"—"}</div></div></div>
-<div style="margin-top:7px;"><span class="bdg" style="background:${isPeda?"#ffedd5":"#dbeafe"};color:${isPeda?"#9a3412":"#1e40af"};">${isPeda?"🎓 Véhicule pédagogique":"👤 Véhicule client"}</span></div></div>
+<div><div class="lb">Kilométrage</div><div class="vl">${order.km?esc(order.km)+" km":"—"}</div></div></div>${ev?`
+<div class="grid g3" style="margin-top:6px;">
+<div><div class="lb">Énergie (repère P.3)</div><div class="vl">${esc(ev.energy||"—")}</div></div>
+<div><div class="lb">VIN – 17 caractères (repère E)</div><div class="vl">${esc(ev.vin||"—")}</div></div>
+<div><div class="lb">1re immatriculation (repère B)</div><div class="vl">${ev.firstReg?fD(ev.firstReg):"—"}</div></div></div>`:""}
+<div style="margin-top:7px;"><span class="bdg" style="background:${isPeda?"#ffedd5":"#dbeafe"};color:${isPeda?"#9a3412":"#1e40af"};">${isPeda?"🎓 Véhicule pédagogique":"👤 Véhicule client"}</span>${ev?`<span class="bdg" style="background:#fef9c3;color:#a16207;margin-left:6px;">⚡ Véhicule électrique / hybride</span>`:""}</div></div>
+${ev&&ev.opType!=="non_elec"?`<div class="warn">⚠ Opération sur le circuit haute tension : la batterie de traction doit être mise en sécurité (consignation) par un chargé de consignation BCL avant toute intervention.</div>`:""}
 ${personBlock}
 <div class="sec"><div class="sh">Motif d'entrée / Réclamation</div><div class="tb">${esc(order.reason||"—")}</div></div>
-<div class="sec"><div class="sh">Travaux à réaliser</div><div class="tasks">${tasksHTML}</div></div>
+<div class="sec"><div class="sh">Travaux ${ev?"demandés":"à réaliser"}</div>${tasksHTML}</div>
+${evBlock}
 <div class="twocol">
 <div class="sec"><div class="sh">Observations à signaler au client</div><div class="tb">${esc(order.observations||"—")}</div></div>
 <div class="sec"><div class="sh">Ventes additionnelles prévues</div><div class="tb">${esc(order.additionalSales||"—")}</div></div>
 </div>
 ${exitBlock}
+${engBlock}
 <div class="sr">
-<div><div class="sl">Signature du client (accord pour les travaux)</div><div class="sb">${sigHTML}</div><div class="sn">${esc(order.clientName||(isPeda?order.teacher||"":""))}</div></div>
-<div><div class="sl">Visa du technicien / enseignant</div><div class="sb"><div style="font-size:11px;color:#ccc;text-align:center;line-height:80px;">..................................</div></div><div class="sn">${isPeda?esc(order.teacher||""):""}</div></div>
+<div><div class="sl">Signature du client${ev?", précédée de la mention « bon pour accord »":" (accord pour les travaux)"}</div><div class="sb">${sigHTML}</div><div class="sn">${esc(order.clientName||(isPeda?order.teacher||"":""))}</div></div>
+<div><div class="sl">${ev?"Nom et signature du réceptionnaire":"Visa du technicien / enseignant"}</div><div class="sb"><div style="font-size:11px;color:#ccc;text-align:center;line-height:80px;">..................................</div></div><div class="sn">${isPeda?esc(order.teacher||""):""}</div></div>
 </div>
 <div class="foot">Lycée Gallieni – BTS Maintenance des Véhicules &nbsp;|&nbsp; ${esc(order.orderNum)} &nbsp;|&nbsp; Imprimé le ${new Date().toLocaleDateString("fr-FR")}</div>
 </div></body></html>`;
@@ -389,7 +481,7 @@ function AuthCard({ children }) {
         <div style={{ textAlign:"center", marginBottom:28 }}>
           <img src={LOGO} alt="DMS Atelier BTS MV – Lycée Gallieni" style={{ width:104, height:104, borderRadius:"50%", display:"block", margin:"0 auto 12px" }}/>
           <h1 style={{ color:C.txt, fontSize:22, fontWeight:700, margin:0 }}>DMS – Atelier BTS MV</h1>
-          <p style={{ color:C.mut, fontSize:13, marginTop:6 }}>Lycee Gallieni</p>
+          <p style={{ color:C.mut, fontSize:13, marginTop:6 }}>Lycée Gallieni</p>
         </div>
         {children}
       </div>
@@ -556,6 +648,7 @@ function OrdCard({ o, onClick }) {
         <span style={{ fontSize:11, padding:"2px 8px", borderRadius:999, fontWeight:600, background:isPeda?"#ffedd5":"#dbeafe", color:isPeda?"#9a3412":"#1d4ed8" }}>
           {isPeda?"🎓 Pédagogique":"👤 Client"}
         </span>
+        {o.ev && <span style={{ fontSize:11, padding:"2px 8px", borderRadius:999, fontWeight:600, background:"#fef9c3", color:"#a16207" }}>⚡ VE/VH</span>}
         {o.km && <span style={{ fontSize:11, color:C.mut }}>📍 {Number(o.km).toLocaleString("fr-FR")} km</span>}
         {o.signature && <span style={{ fontSize:11, color:"#059669" }}>✍ Signé</span>}
       </div>
@@ -670,11 +763,16 @@ function NewOrderForm({ addOrder, teachers, students, user, nav, selOrd, notify 
     reason:"", fileRef:"",
     teacher: user.role==="enseignant"?user.name:"",
     selStu:[], custTask:"", observations:"", additionalSales:"",
-    tasks: TASKS0.map(t => ({ id:gid(), label:t, done:false, doneBy:"", doneAt:"" })),
+    tasks: TASKS0.map(t => ({ id:gid(), label:t, done:false, doneBy:"", doneAt:"", est:"", amount:"" })),
     signature:"",
+    ev:null,              // null = OR standard ; objet = OR véhicule électrique/hybride
   });
   const set=(k,v)=>sf(p=>({...p,[k]:v}));
-  const addTask=()=>{if(!f.custTask.trim())return;set("tasks",[...f.tasks,{id:gid(),label:f.custTask.trim(),done:false,doneBy:"",doneAt:""}]);set("custTask","");};
+  const isEv=!!f.ev;
+  const setEv=(k,v)=>sf(p=>({...p,ev:{...p.ev,[k]:v}}));
+  const setEvStep=(id,k,v)=>sf(p=>({...p,ev:{...p.ev,steps:{...p.ev.steps,[id]:{...p.ev.steps[id],[k]:v}}}}));
+  const setTask=(id,k,v)=>sf(p=>({...p,tasks:p.tasks.map(t=>t.id===id?{...t,[k]:v}:t)}));
+  const addTask=()=>{if(!f.custTask.trim())return;set("tasks",[...f.tasks,{id:gid(),label:f.custTask.trim(),done:false,doneBy:"",doneAt:"",est:"",amount:""}]);set("custTask","");};
   const togStu=(n)=>set("selStu",f.selStu.includes(n)?f.selStu.filter(s=>s!==n):[...f.selStu,n]);
   const submit=async()=>{
     if(!f.plate.trim()||!f.brand.trim()||!f.model.trim()){notify("Immatriculation, marque et modèle sont obligatoires","error");return;}
@@ -686,12 +784,13 @@ function NewOrderForm({ addOrder, teachers, students, user, nav, selOrd, notify 
       teacher:f.teacher,assignedStudents:f.vtype==="peda"?f.selStu:[],
       tasks:f.tasks,observations:f.observations,additionalSales:f.additionalSales,
       signature:f.signature,status:"en_attente",exitDate:"",exitTime:"",exitCondition:"",
+      ev:f.ev,
       createdBy:user.name,
     };
     sbusy(true);
     try {
       const created=await addOrder(o);
-      selOrd(created.id);nav("order-detail");notify("Ordre de réparation "+created.orderNum+" créé");
+      selOrd(created.id);nav("order-detail");notify((f.ev?"Ordre VE/VH ":"Ordre de réparation ")+created.orderNum+" créé");
       archiveToDrive(created, notify);   // archivage PDF sur le Drive (création)
     } catch(e){ console.error(e); notify("Erreur lors de la création : "+(e.message||e),"error"); }
     finally { sbusy(false); }
@@ -702,6 +801,26 @@ function NewOrderForm({ addOrder, teachers, students, user, nav, selOrd, notify 
         <h2 style={{ color:C.txt, fontSize:20, fontWeight:700, margin:0 }}>📋 Nouvel ordre de réparation</h2>
         <Btn ghost sm onClick={() => nav("orders")}>← Retour</Btn>
       </div>
+      <div style={{ display:"flex", borderBottom:"1px solid "+C.bdr, marginBottom:16, overflowX:"auto" }}>
+        {[{ id:"std", l:"📋 OR standard" },{ id:"ev", l:"⚡ OR véhicule électrique / hybride" }].map(t => {
+          const on = (t.id==="ev") === isEv;
+          return (
+            <button key={t.id} type="button" onClick={() => sf(p => ({ ...p, ev: t.id==="ev" ? (p.ev||EV0()) : null }))}
+              style={{ padding:"10px 16px", border:"none", background:"transparent", cursor:"pointer", fontSize:13, whiteSpace:"nowrap",
+                fontWeight:on?700:400, color:on?"#2563eb":C.sub, borderBottom:on?"2px solid #3b82f6":"2px solid transparent", marginBottom:-1 }}>
+              {t.l}
+            </button>
+          );
+        })}
+      </div>
+      {isEv && (
+        <div style={{ background:"#fef9c3", border:"1px solid #fde047", borderRadius:10, padding:"12px 14px", marginBottom:16, fontSize:13, color:"#854d0e" }}>
+          <b>⚡ Ordre de réparation « véhicule électrique ou hybride »</b><br/>
+          Ce formulaire ajoute la traçabilité de la <b>mise en sécurité électrique de la batterie de traction</b> :
+          type d'opération, consignation, interruption, reprise, fin de travaux et déconsignation.
+          Habilitations requises : <b>B2VL</b> (chargé de travaux) et <b>BCL</b> (chargé de consignation).
+        </div>
+      )}
       <Crd>
         <SecTitle>🚗 Véhicule</SecTitle>
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))", gap:12 }}>
@@ -711,6 +830,9 @@ function NewOrderForm({ addOrder, teachers, students, user, nav, selOrd, notify 
           <Inp label="Année" value={f.year} onChange={v=>set("year",v)} placeholder="2020"/>
           <Inp label="Kilométrage" value={f.km} onChange={v=>set("km",v)} placeholder="45000"/>
           <Sel label="Type de véhicule" value={f.vtype} onChange={v=>set("vtype",v)} opts={[{v:"client",l:"👤 Véhicule client"},{v:"peda",l:"🎓 Véhicule pédagogique"}]}/>
+          {isEv && <Sel label="Énergie (repère P.3)" value={f.ev.energy} onChange={v=>setEv("energy",v)} opts={EV_ENERGIES.map(e=>({v:e,l:e||"— Choisir —"}))}/>}
+          {isEv && <Inp label="VIN – 17 caractères (repère E)" value={f.ev.vin} onChange={v=>setEv("vin",v.toUpperCase())} placeholder="VF3XXXXXXXXXXXXXX"/>}
+          {isEv && <Inp label="1re immatriculation (repère B)" value={f.ev.firstReg} onChange={v=>setEv("firstReg",v)} type="date"/>}
         </div>
         <SecTitle>📁 Dossier</SecTitle>
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))", gap:12 }}>
@@ -725,6 +847,9 @@ function NewOrderForm({ addOrder, teachers, students, user, nav, selOrd, notify 
             <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))", gap:12 }}>
               <Inp label="Nom du client" value={f.clientName} onChange={v=>set("clientName",v)} placeholder="M. Dupont"/>
               <Inp label="Téléphone" value={f.clientPhone} onChange={v=>set("clientPhone",v)} placeholder="06 12 34 56 78"/>
+              {isEv && <Inp label="Moyen de contact retenu" value={f.ev.clientContact} onChange={v=>setEv("clientContact",v)} placeholder="Téléphone, SMS, courriel…"/>}
+              {isEv && <Inp label="Adresse" value={f.ev.clientAddress} onChange={v=>setEv("clientAddress",v)} placeholder="12 rue des Ateliers, 31000 Toulouse"/>}
+              {isEv && <Inp label="Adresse électronique" value={f.ev.clientEmail} onChange={v=>setEv("clientEmail",v)} placeholder="client@exemple.fr"/>}
             </div>
           </div>
         ) : (
@@ -740,18 +865,61 @@ function NewOrderForm({ addOrder, teachers, students, user, nav, selOrd, notify 
           </div>
         )}
         <SecTitle>🔍 Motif d'entrée</SecTitle>
-        <TA value={f.reason} onChange={v=>set("reason",v)} placeholder="Décrire le motif d'entrée…" rows={3}/>
-        <SecTitle>☑️ Travaux à réaliser</SecTitle>
-        <p style={{ color:C.mut, fontSize:12, margin:"0 0 10px" }}>Listez les travaux prevus. Les cases seront <b>cochees par le technicien en atelier</b> au fur et a mesure de la realisation (onglet Travaux de l'ordre).</p>
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(230px,1fr))", gap:8, marginBottom:10 }}>
-          {f.tasks.map(t => (
-            <div key={t.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 10px", borderRadius:6, background:"#f1f5f9", border:"1px solid "+C.bdr, fontSize:13, color:C.txt }}>
-              <span style={{ width:15, height:15, borderRadius:3, border:"2px solid "+C.bdr, background:"#fff", flexShrink:0 }}/>
-              <span style={{ flex:1 }}>{t.label}</span>
-              <button onClick={e=>{e.preventDefault();set("tasks",f.tasks.filter(x=>x.id!==t.id));}} title="Retirer ce travail" style={{ background:"none", border:"none", color:C.mut, cursor:"pointer", fontSize:16, padding:0, lineHeight:1 }}>×</button>
+        <TA value={f.reason} onChange={v=>set("reason",v)} placeholder={isEv?"Décrire le motif d'entrée dans les termes du client…":"Décrire le motif d'entrée…"} rows={3}/>
+        {isEv && (
+          <div>
+            <SecTitle>⚡ Type d'opération pour véhicule électrique ou hybride</SecTitle>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(250px,1fr))", gap:8, marginBottom:12 }}>
+              {EV_OPS.map(op => {
+                const on = f.ev.opType===op.v;
+                return (
+                  <label key={op.v} style={{ display:"flex", alignItems:"flex-start", gap:10, padding:"10px 12px", borderRadius:8, cursor:"pointer",
+                    background:on?op.bg:"#f1f5f9", border:"1px solid "+(on?op.col:C.bdr) }}>
+                    <input type="radio" name="evop" checked={on} onChange={()=>setEv("opType",op.v)} style={{ marginTop:2, flexShrink:0 }}/>
+                    <span>
+                      <span style={{ display:"block", fontSize:13, fontWeight:600, color:on?op.col:C.txt }}>{op.l}</span>
+                      <span style={{ fontSize:11, color:C.mut }}>{op.s}</span>
+                    </span>
+                  </label>
+                );
+              })}
             </div>
-          ))}
-        </div>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))", gap:12 }}>
+              <Inp label="Chargé de travaux B2VL" value={f.ev.steps.b2vl.name} onChange={v=>setEvStep("b2vl","name",v)} placeholder="Nom et prénom"/>
+              <Inp label="Date de prise en charge" value={f.ev.steps.b2vl.date} onChange={v=>setEvStep("b2vl","date",v)} type="date"/>
+              <Inp label="Heure" value={f.ev.steps.b2vl.time} onChange={v=>setEvStep("b2vl","time",v)} type="time"/>
+            </div>
+            <p style={{ color:C.mut, fontSize:12, margin:"10px 0 0" }}>
+              Consignation, interruption, reprise, fin de travaux et déconsignation sont horodatées <b>en atelier</b>,
+              dans l'onglet « ⚡ Sécurité électrique » de l'ordre de réparation.
+            </p>
+          </div>
+        )}
+        <SecTitle>☑️ Travaux {isEv?"demandés":"à réaliser"}</SecTitle>
+        <p style={{ color:C.mut, fontSize:12, margin:"0 0 10px" }}>Listez les travaux prévus. Les cases seront <b>cochées par le technicien en atelier</b> au fur et à mesure de la réalisation (onglet Travaux de l'ordre).</p>
+        {isEv ? (
+          <div style={{ display:"flex", flexDirection:"column", gap:6, marginBottom:10 }}>
+            {f.tasks.map((t,i) => (
+              <div key={t.id} style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap", padding:"6px 8px", borderRadius:6, background:"#f8fafc", border:"1px solid "+C.bdr }}>
+                <span style={{ width:20, textAlign:"center", fontSize:12, color:C.mut, flexShrink:0 }}>{i+1}</span>
+                <span style={{ flex:"1 1 180px", fontSize:13, color:C.txt }}>{t.label}</span>
+                <Inp value={t.est} onChange={v=>setTask(t.id,"est",v)} placeholder="Temps est." style={{ width:104, background:"#fff" }}/>
+                <Inp value={t.amount} onChange={v=>setTask(t.id,"amount",v)} placeholder="Montant HT" style={{ width:104, background:"#fff" }}/>
+                <button onClick={e=>{e.preventDefault();set("tasks",f.tasks.filter(x=>x.id!==t.id));}} title="Retirer ce travail" style={{ background:"none", border:"none", color:C.mut, cursor:"pointer", fontSize:16, padding:0, lineHeight:1, flexShrink:0 }}>×</button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(230px,1fr))", gap:8, marginBottom:10 }}>
+            {f.tasks.map(t => (
+              <div key={t.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 10px", borderRadius:6, background:"#f1f5f9", border:"1px solid "+C.bdr, fontSize:13, color:C.txt }}>
+                <span style={{ width:15, height:15, borderRadius:3, border:"2px solid "+C.bdr, background:"#fff", flexShrink:0 }}/>
+                <span style={{ flex:1 }}>{t.label}</span>
+                <button onClick={e=>{e.preventDefault();set("tasks",f.tasks.filter(x=>x.id!==t.id));}} title="Retirer ce travail" style={{ background:"none", border:"none", color:C.mut, cursor:"pointer", fontSize:16, padding:0, lineHeight:1 }}>×</button>
+              </div>
+            ))}
+          </div>
+        )}
         <div style={{ display:"flex", gap:8 }}>
           <input value={f.custTask} onChange={e=>set("custTask",e.target.value)} onKeyDown={e=>{if(e.key==="Enter")addTask();}} placeholder="Ajouter une tâche personnalisée…"
             style={{ flex:1, background:"#f1f5f9", border:"1px solid "+C.bdr, borderRadius:6, padding:"8px 10px", color:C.txt, fontSize:13, outline:"none", fontFamily:"inherit" }}/>
@@ -762,6 +930,17 @@ function NewOrderForm({ addOrder, teachers, students, user, nav, selOrd, notify 
           <TA label="Observations à signaler au client" value={f.observations} onChange={v=>set("observations",v)} placeholder="Anomalies constatées…"/>
           <TA label="Ventes additionnelles à prévoir" value={f.additionalSales} onChange={v=>set("additionalSales",v)} placeholder="Pièces, accessoires…"/>
         </div>
+        {isEv && (
+          <div>
+            <SecTitle>🤝 Engagement et accord</SecTitle>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))", gap:12 }}>
+              <Inp label="Montant prévisionnel annoncé (€ TTC)" value={f.ev.quoteAmount} onChange={v=>setEv("quoteAmount",v)} placeholder="450"/>
+              <Inp label="Restitution convenue le" value={f.ev.returnDate} onChange={v=>setEv("returnDate",v)} type="date"/>
+              <Inp label="À (heure)" value={f.ev.returnTime} onChange={v=>setEv("returnTime",v)} type="time"/>
+            </div>
+            <p style={{ color:C.mut, fontSize:12, margin:"8px 0 0" }}>Le client est rappelé avant tout dépassement du montant annoncé.</p>
+          </div>
+        )}
         <SecTitle>✍ Signature du client (accord pour les travaux)</SecTitle>
         <div style={{ background:"#f1f5f9", borderRadius:10, padding:16, border:"1px solid "+C.bdr }}>
           <p style={{ color:C.sub, fontSize:12, marginBottom:12 }}>Le client certifie avoir pris connaissance des travaux à réaliser et donne son accord.</p>
@@ -779,7 +958,7 @@ function NewOrderForm({ addOrder, teachers, students, user, nav, selOrd, notify 
         </div>
         <div style={{ display:"flex", justifyContent:"flex-end", gap:10, marginTop:20, paddingTop:16, borderTop:"1px solid "+C.bdr }}>
           <Btn ghost onClick={()=>nav("orders")}>Annuler</Btn>
-          <Btn onClick={submit} disabled={busy}>{busy?"Création…":"✅ Créer l'ordre de réparation"}</Btn>
+          <Btn onClick={submit} disabled={busy}>{busy?"Création…":(isEv?"⚡ Créer l'OR véhicule électrique / hybride":"✅ Créer l'ordre de réparation")}</Btn>
         </div>
       </Crd>
     </div>
@@ -801,9 +980,10 @@ function OrderDetail({ orderId, orders, editOrder, removeOrder, isAdmin, user, n
     const tasks=o.tasks.map(t=>{if(t.id!==tid)return t;const d=!t.done;return{...t,done:d,doneBy:d?user.name:"",doneAt:d?new Date().toISOString():""};});
     upd({tasks,status:tasks.every(t=>t.done)?"termine":(o.status==="en_attente"?"en_cours":o.status)});
   };
-  const addT=()=>{if(!newTask.trim())return;upd({tasks:[...o.tasks,{id:gid(),label:newTask.trim(),done:false,doneBy:"",doneAt:""}]});snt("");};
+  const addT=()=>{if(!newTask.trim())return;upd({tasks:[...o.tasks,{id:gid(),label:newTask.trim(),done:false,doneBy:"",doneAt:"",est:"",amount:""}]});snt("");};
   const dn=o.tasks?o.tasks.filter(t=>t.done).length:0,tot=o.tasks?o.tasks.length:0,pct=tot?Math.round(dn/tot*100):0;
-  const TABS=[{id:"tasks",l:"☑️ Travaux"},{id:"notes",l:"📝 Notes"},{id:"sig",l:"✍ Accord client"},...(o.exitDate?[{id:"exit",l:"🚪 Sortie"}]:[])];
+  const TABS=[{id:"tasks",l:"☑️ Travaux"},...(o.ev?[{id:"ev",l:"⚡ Sécurité électrique"}]:[]),{id:"notes",l:"📝 Notes"},{id:"sig",l:"✍ Accord client"},...(o.exitDate?[{id:"exit",l:"🚪 Sortie"}]:[])];
+  const evSet=(id,patch)=>upd({ev:{...o.ev,steps:{...(o.ev.steps||{}),[id]:{...evStep(o.ev,id),...patch}}}});
   return (
     <div style={{maxWidth:900,margin:"0 auto"}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16,flexWrap:"wrap",gap:12}}>
@@ -814,6 +994,7 @@ function OrderDetail({ orderId, orders, editOrder, removeOrder, isAdmin, user, n
             <Badge status={o.status}/>
             <span style={{fontSize:12,fontWeight:600,color:isPeda?"#c2410c":"#1d4ed8"}}>{isPeda?"🎓 Pédagogique":"👤 Client"}</span>
             <span style={{fontSize:13,color:C.sub}}>{o.brand} {o.model} {o.year?"("+o.year+")":""}</span>
+            {o.ev&&<span style={{fontSize:12,fontWeight:600,padding:"2px 8px",borderRadius:999,background:"#fef9c3",color:"#a16207"}}>⚡ VE/VH</span>}
             {o.signature&&<span style={{fontSize:12,color:"#059669"}}>✍ Signé</span>}
           </div>
         </div>
@@ -850,9 +1031,9 @@ function OrderDetail({ orderId, orders, editOrder, removeOrder, isAdmin, user, n
             onToggle={(name)=>{const sel=o.assignedStudents.includes(name);const na=sel?o.assignedStudents.filter(n=>n!==name):[...o.assignedStudents,name];upd({assignedStudents:na});}}/>
         </Crd>
       )}
-      <div style={{display:"flex",borderBottom:"1px solid "+C.bdr,marginBottom:14}}>
+      <div style={{display:"flex",borderBottom:"1px solid "+C.bdr,marginBottom:14,overflowX:"auto"}}>
         {TABS.map(t=>(
-          <button key={t.id} onClick={()=>st(t.id)} style={{padding:"10px 16px",border:"none",background:"transparent",cursor:"pointer",fontSize:13,fontWeight:tab===t.id?700:400,color:tab===t.id?"#2563eb":C.sub,borderBottom:tab===t.id?"2px solid #3b82f6":"2px solid transparent",marginBottom:-1}}>{t.l}</button>
+          <button key={t.id} onClick={()=>st(t.id)} style={{padding:"10px 16px",border:"none",background:"transparent",cursor:"pointer",fontSize:13,whiteSpace:"nowrap",fontWeight:tab===t.id?700:400,color:tab===t.id?"#2563eb":C.sub,borderBottom:tab===t.id?"2px solid #3b82f6":"2px solid transparent",marginBottom:-1}}>{t.l}</button>
         ))}
       </div>
       {tab==="tasks"&&(
@@ -870,6 +1051,8 @@ function OrderDetail({ orderId, orders, editOrder, removeOrder, isAdmin, user, n
                 {t.done&&<span style={{color:"#fff",fontSize:12,fontWeight:700}}>✓</span>}
               </div>
               <span style={{flex:1,fontSize:14,color:t.done?"#15803d":C.txt,textDecoration:t.done?"line-through":"none"}}>{t.label}</span>
+              {o.ev&&t.est&&<span style={{fontSize:11,color:C.mut,whiteSpace:"nowrap"}}>⏱ {t.est}</span>}
+              {o.ev&&t.amount&&<span style={{fontSize:11,color:C.mut,whiteSpace:"nowrap"}}>{eur(t.amount)} HT</span>}
               {t.done&&t.doneBy&&<span style={{fontSize:11,color:C.mut,whiteSpace:"nowrap"}}>{t.doneBy} · {fD(t.doneAt)}</span>}
             </div>
           ))}
@@ -882,6 +1065,54 @@ function OrderDetail({ orderId, orders, editOrder, removeOrder, isAdmin, user, n
           )}
         </div>
       )}
+      {tab==="ev"&&o.ev&&(
+        <div style={{display:"flex",flexDirection:"column",gap:12}}>
+          <Crd>
+            <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+              <span style={{fontSize:12,fontWeight:700,padding:"4px 12px",borderRadius:999,background:evOp(o.ev.opType).bg,color:evOp(o.ev.opType).col}}>{evOp(o.ev.opType).l}</span>
+              {o.ev.energy&&<span style={{fontSize:12,color:C.sub}}>🔋 {o.ev.energy}</span>}
+              {o.ev.vin&&<span style={{fontSize:12,color:C.mut}}>VIN {o.ev.vin}</span>}
+              {o.ev.firstReg&&<span style={{fontSize:12,color:C.mut}}>1re immat. {fD(o.ev.firstReg)}</span>}
+            </div>
+            <div style={{marginTop:10,padding:"10px 12px",borderRadius:8,fontSize:13,fontWeight:600,
+              background:evTodo(o.ev)?"#fee2e2":evOpen(o.ev)?"#dcfce7":"#f1f5f9",
+              color:evTodo(o.ev)?"#b91c1c":evOpen(o.ev)?"#15803d":C.sub}}>
+              {o.ev.opType==="non_elec"
+                ? "Opération non électrique : aucune consignation de la batterie de traction requise."
+                : evTodo(o.ev)
+                  ? "⛔ Batterie de traction NON consignée — aucune intervention sur le circuit haute tension."
+                  : evOpen(o.ev)
+                    ? "✅ Véhicule consigné (hors tension) depuis le "+evWhen(evStep(o.ev,"consign"))+" — déconsignation à effectuer en fin de travaux."
+                    : "🔌 Véhicule déconsigné / remis sous tension le "+evWhen(evStep(o.ev,"deconsign"))+"."}
+            </div>
+          </Crd>
+          {EV_STEPS.map(st=>{
+            const v=evStep(o.ev,st.id), ok=evDone(v);
+            return (
+              <Crd key={st.id} style={{borderLeft:"4px solid "+(ok?"#16a34a":C.bdr)}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,flexWrap:"wrap",marginBottom:6}}>
+                  <h4 style={{margin:0,fontSize:14,fontWeight:700,color:ok?"#15803d":C.txt}}>{ok?"✅":"⬜"} {st.lbl}</h4>
+                  <div style={{display:"flex",gap:8}}>
+                    {!ok&&<Btn sm onClick={()=>evSet(st.id,{date:today(),time:tNow(),visa:user.name})}>⏱ Horodater maintenant</Btn>}
+                    {ok&&<Btn sm ghost onClick={()=>{if(window.confirm("Effacer l'horodatage de « "+st.lbl+" » ?"))evSet(st.id,{date:"",time:"",visa:""});}}>↺ Effacer</Btn>}
+                  </div>
+                </div>
+                <p style={{color:C.sub,fontSize:12,margin:"0 0 10px"}}>{st.who?<b>{v.name||"…"} </b>:null}{st.txt}</p>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:10}}>
+                  {st.who&&<Inp label={st.who} value={v.name} onChange={val=>evSet(st.id,{name:val})} placeholder="Nom et prénom"/>}
+                  <Inp label="Date" value={v.date} onChange={val=>evSet(st.id,{date:val})} type="date"/>
+                  <Inp label="Heure" value={v.time} onChange={val=>evSet(st.id,{time:val})} type="time"/>
+                  <Inp label="Visa" value={v.visa} onChange={val=>evSet(st.id,{visa:val})} placeholder="Initiales"/>
+                </div>
+              </Crd>
+            );
+          })}
+          <p style={{color:C.mut,fontSize:12,margin:0}}>
+            Les habilitations <b>B2VL</b> (chargé de travaux) et <b>BCL</b> (chargé de consignation) doivent être à jour.
+            Ce relevé est repris intégralement sur le PDF de l'ordre de réparation.
+          </p>
+        </div>
+      )}
       {tab==="notes"&&(
         <div style={{display:"flex",flexDirection:"column",gap:14}}>
           <TA label="👁 Observations à signaler au client" value={obs} onChange={canEdit?setObs:null} onBlur={canEdit?()=>{if(obs!==(o.observations||""))upd({observations:obs});}:null} readOnly={!canEdit} placeholder={canEdit?"Anomalies constatées…":"Aucune observation"} rows={4}/>
@@ -891,10 +1122,10 @@ function OrderDetail({ orderId, orders, editOrder, removeOrder, isAdmin, user, n
       {tab==="sig"&&(
         <Crd>
           <h3 style={{color:"#2563eb",fontSize:15,fontWeight:700,marginBottom:4}}>✍ Accord du client pour les travaux</h3>
-          <p style={{color:C.sub,fontSize:12,marginBottom:14}}>Signature recueillie lors de la creation de l'ordre de réparation.</p>
+          <p style={{color:C.sub,fontSize:12,marginBottom:14}}>Signature recueillie lors de la création de l'ordre de réparation.</p>
           {o.signature?(
             <div>
-              <div style={{color:"#059669",fontSize:13,fontWeight:600,marginBottom:10}}>✅ Document signe</div>
+              <div style={{color:"#059669",fontSize:13,fontWeight:600,marginBottom:10}}>✅ Document signé</div>
               <img src={o.signature} alt="Signature client" style={{maxWidth:400,background:"#fff",borderRadius:8,padding:6,display:"block",border:"1px solid "+C.bdr}}/>
               <div style={{color:C.mut,fontSize:12,marginTop:8}}>Signataire : {isPeda?(o.teacher||"—"):(o.clientName||"—")}</div>
             </div>
@@ -907,7 +1138,7 @@ function OrderDetail({ orderId, orders, editOrder, removeOrder, isAdmin, user, n
         <Crd>
           <h3 style={{color:"#059669",fontSize:15,fontWeight:700,marginBottom:12}}>🚪 Sortie enregistrée</h3>
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:12,fontSize:13}}>
-            <div><div style={{color:C.mut,fontSize:11}}>Date de sortie</div><div style={{color:C.txt}}>{fD(o.exitDate)} a {o.exitTime}</div></div>
+            <div><div style={{color:C.mut,fontSize:11}}>Date de sortie</div><div style={{color:C.txt}}>{fD(o.exitDate)} à {o.exitTime}</div></div>
             <div><div style={{color:C.mut,fontSize:11}}>État à la sortie</div><div style={{color:C.txt}}>{o.exitCondition||"—"}</div></div>
           </div>
         </Crd>
@@ -915,7 +1146,7 @@ function OrderDetail({ orderId, orders, editOrder, removeOrder, isAdmin, user, n
       {isStaff&&(
         <div style={{marginTop:20,paddingTop:16,borderTop:"1px solid "+C.bdr}}>
           {o.status!=="termine"?(
-            <Btn full onClick={()=>sse(true)} style={{background:"#065f46",fontSize:15,padding:"12px"}}>✅ Valider et terminer l'OR</Btn>
+            <Btn full onClick={()=>{ if(evOpen(o.ev)&&!window.confirm("⚠️ La batterie de traction est encore consignée (hors tension).\n\nLa déconsignation / remise sous tension n'a pas été horodatée dans l'onglet « ⚡ Sécurité électrique ».\n\nTerminer quand même l'ordre de réparation ?"))return; sse(true); }} style={{background:"#065f46",fontSize:15,padding:"12px"}}>✅ Valider et terminer l'OR</Btn>
           ):(
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:10}}>
               <span style={{color:"#059669",fontSize:14,fontWeight:600}}>✅ Ordre terminé{o.exitDate?" le "+fD(o.exitDate):""} – archivé sur le Drive</span>
@@ -1489,7 +1720,7 @@ export default function DMSApp() {
         <header style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 16px",background:C.hdr,borderBottom:"1px solid "+C.bdr,position:"sticky",top:0,zIndex:30}}>
           <div style={{display:"flex",alignItems:"center",gap:12}}>
             {!isDesktop&&<button onClick={()=>sso(true)} style={{background:"none",border:"none",color:C.sub,cursor:"pointer",fontSize:22,padding:"2px 6px",lineHeight:1}}>☰</button>}
-            <div style={{display:"flex",alignItems:"center",gap:8}}><img src={LOGO} alt="" style={{width:28,height:28,borderRadius:"50%",flexShrink:0}}/><div><div style={{color:"#3b82f6",fontWeight:700,fontSize:14}}>DMS – Atelier BTS MV</div><div style={{color:C.mut,fontSize:11}}>Lycee Gallieni</div></div></div>
+            <div style={{display:"flex",alignItems:"center",gap:8}}><img src={LOGO} alt="" style={{width:28,height:28,borderRadius:"50%",flexShrink:0}}/><div><div style={{color:"#3b82f6",fontWeight:700,fontSize:14}}>DMS – Atelier BTS MV</div><div style={{color:C.mut,fontSize:11}}>Lycée Gallieni</div></div></div>
           </div>
           <div style={{display:"flex",alignItems:"center",gap:8}}>
             {isDesktop&&<span style={{color:C.sub,fontSize:13}}>{cu.name}</span>}

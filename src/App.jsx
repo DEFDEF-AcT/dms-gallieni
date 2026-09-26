@@ -38,7 +38,7 @@ const toLoginEmail = (v) => v.includes("@") ? v.trim() : slugId(v) + "@" + STUDE
 const VS = {
   en_attente: { label: "En attente", col: "#F59E0B" },
   en_cours:   { label: "En cours",   col: "#60A5FA" },
-  termine:    { label: "Termine",    col: "#34D399" },
+  termine:    { label: "Terminé",   col: "#34D399" },
 };
 const C = {
   bg:"#eff6ff", card:"#ffffff", side:"#dbeafe", hdr:"#e0f2fe",
@@ -184,54 +184,54 @@ function orderHTML(order) {
   ).join("");
   const sigHTML = order.signature
     ? `<img src="${order.signature}" style="max-height:72px;max-width:100%;display:block;margin:auto;"/>`
-    : `<div style="font-size:11px;color:#bbb;text-align:center;line-height:80px;">Non signee</div>`;
+    : `<div style="font-size:11px;color:#bbb;text-align:center;line-height:80px;">Non signée</div>`;
   const exitBlock = order.exitDate ? `
-    <div class="sec"><div class="sh">Sortie du vehicule</div>
+    <div class="sec"><div class="sh">Sortie du véhicule</div>
       <div class="grid g3">
-        <div><div class="lb">Date sortie</div><div class="vl">${fD(order.exitDate)}</div></div>
-        <div><div class="lb">Heure sortie</div><div class="vl">${esc(order.exitTime||"—")}</div></div>
-        <div><div class="lb">Etat</div><div class="vl">${esc(order.exitCondition||"—")}</div></div>
+        <div><div class="lb">Date de sortie</div><div class="vl">${fD(order.exitDate)}</div></div>
+        <div><div class="lb">Heure de sortie</div><div class="vl">${esc(order.exitTime||"—")}</div></div>
+        <div><div class="lb">État</div><div class="vl">${esc(order.exitCondition||"—")}</div></div>
       </div>
     </div>` : "";
   const personBlock = isPeda ? `
-    <div class="sec"><div class="sh">BTS MV - Affectation pedagogique</div>
+    <div class="sec"><div class="sh">BTS MV – Affectation pédagogique</div>
       <div class="grid g2">
         <div><div class="lb">Enseignant responsable</div><div class="vl">${esc(order.teacher||"—")}</div></div>
-        <div><div class="lb">Eleves affectes</div><div class="vl">${esc(order.students||"—")}</div></div>
+        <div><div class="lb">Élèves affectés</div><div class="vl">${esc(order.students||"—")}</div></div>
       </div>
     </div>` : `
     <div class="sec"><div class="sh">Client</div>
       <div class="grid g2">
         <div><div class="lb">Nom du client</div><div class="vl">${esc(order.clientName||"—")}</div></div>
-        <div><div class="lb">Telephone</div><div class="vl">${esc(order.clientPhone||"—")}</div></div>
+        <div><div class="lb">Téléphone</div><div class="vl">${esc(order.clientPhone||"—")}</div></div>
       </div>
     </div>`;
   const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(order.orderNum)}</title>
 <style>*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#111;background:#fff;}.page{padding:12mm 15mm;max-width:210mm;margin:0 auto;}.hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #1d4ed8;padding-bottom:10px;margin-bottom:14px;}.bn{font-size:20px;font-weight:bold;color:#1d4ed8;}.bs{font-size:10px;color:#555;margin-top:2px;}.on{font-size:22px;font-weight:bold;color:#1d4ed8;text-align:right;}.om{font-size:10px;color:#555;text-align:right;margin-top:2px;}.sec{margin-bottom:10px;}.sh{background:#1d4ed8;color:#fff;padding:4px 10px;font-size:11px;font-weight:bold;margin-bottom:6px;}.grid{display:grid;gap:6px 10px;}.g2{grid-template-columns:1fr 1fr;}.g3{grid-template-columns:1fr 1fr 1fr;}.g5{grid-template-columns:repeat(5,1fr);}.lb{font-size:9px;color:#888;text-transform:uppercase;letter-spacing:.4px;margin-bottom:2px;}.vl{font-size:12px;font-weight:bold;border-bottom:1px solid #ccc;padding-bottom:2px;min-height:17px;}.bdg{display:inline-block;padding:2px 10px;border-radius:20px;font-size:10px;font-weight:bold;}.tasks{display:grid;grid-template-columns:1fr 1fr;gap:0;}.ti{display:flex;align-items:center;gap:6px;padding:4px 5px;border-bottom:1px dotted #e5e5e5;font-size:11px;}.ti.odd{background:#f9f9f9;}.cb{width:13px;height:13px;border:1.5px solid #555;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;font-size:10px;font-weight:bold;}.ck{border-color:#059669;background:#d1fae5;color:#059669;}.td{color:#059669;text-decoration:line-through;}.tby{margin-left:auto;font-size:9px;color:#888;white-space:nowrap;}.tb{border:1px solid #ddd;padding:6px 8px;min-height:52px;font-size:11px;line-height:1.5;white-space:pre-wrap;}.sr{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:16px;padding-top:12px;border-top:2px solid #1d4ed8;}.sl{font-size:10px;color:#333;font-weight:bold;margin-bottom:5px;}.sb{border:1px solid #999;height:82px;display:flex;align-items:center;justify-content:center;background:#fafafa;overflow:hidden;}.sn{font-size:9px;color:#888;text-align:center;margin-top:3px;}.foot{margin-top:14px;padding-top:8px;border-top:1px solid #ddd;font-size:9px;color:#aaa;text-align:center;}.twocol{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}.page{padding:8mm 12mm;}}</style>
 </head><body><div class="page">
-<div class="hdr"><div><div class="bn">Lycee Gallieni</div><div class="bs">Atelier BTS Maintenance des Vehicules</div><div class="bs" style="font-weight:bold;margin-top:5px;font-size:12px;">ORDRE DE REPARATION</div></div>
-<div><div class="on">${esc(order.orderNum)}</div><div class="om">Ref. dossier : ${esc(order.fileRef||"—")}</div><div class="om">Entree le ${fD(order.entryDate)} a ${esc(order.entryTime||"—")}</div><div class="om">Cree par : ${esc(order.createdBy||"—")}</div>
+<div class="hdr"><div><div class="bn">Lycée Gallieni</div><div class="bs">Atelier BTS Maintenance des Véhicules</div><div class="bs" style="font-weight:bold;margin-top:5px;font-size:12px;">ORDRE DE RÉPARATION</div></div>
+<div><div class="on">${esc(order.orderNum)}</div><div class="om">Réf. dossier : ${esc(order.fileRef||"—")}</div><div class="om">Entrée le ${fD(order.entryDate)} à ${esc(order.entryTime||"—")}</div><div class="om">Créé par : ${esc(order.createdBy||"—")}</div>
 <div class="om" style="margin-top:5px;"><span style="background:${sBg};color:${sColor};padding:2px 10px;border-radius:20px;font-size:10px;font-weight:bold;">${sLabel}</span></div></div></div>
-<div class="sec"><div class="sh">Vehicule</div><div class="grid g5">
+<div class="sec"><div class="sh">Véhicule</div><div class="grid g5">
 <div><div class="lb">Immatriculation</div><div class="vl" style="font-size:14px;">${esc(order.plate)}</div></div>
 <div><div class="lb">Marque</div><div class="vl">${esc(order.brand)}</div></div>
-<div><div class="lb">Modele</div><div class="vl">${esc(order.model)}</div></div>
-<div><div class="lb">Annee</div><div class="vl">${esc(order.year||"—")}</div></div>
-<div><div class="lb">Kilometrage</div><div class="vl">${order.km?esc(order.km)+" km":"—"}</div></div></div>
-<div style="margin-top:7px;"><span class="bdg" style="background:${isPeda?"#ffedd5":"#dbeafe"};color:${isPeda?"#9a3412":"#1e40af"};">${isPeda?"🎓 Vehicule pedagogique":"👤 Vehicule client"}</span></div></div>
+<div><div class="lb">Modèle</div><div class="vl">${esc(order.model)}</div></div>
+<div><div class="lb">Année</div><div class="vl">${esc(order.year||"—")}</div></div>
+<div><div class="lb">Kilométrage</div><div class="vl">${order.km?esc(order.km)+" km":"—"}</div></div></div>
+<div style="margin-top:7px;"><span class="bdg" style="background:${isPeda?"#ffedd5":"#dbeafe"};color:${isPeda?"#9a3412":"#1e40af"};">${isPeda?"🎓 Véhicule pédagogique":"👤 Véhicule client"}</span></div></div>
 ${personBlock}
-<div class="sec"><div class="sh">Motif d'entree / Reclamation</div><div class="tb">${esc(order.reason||"—")}</div></div>
-<div class="sec"><div class="sh">Travaux a realiser</div><div class="tasks">${tasksHTML}</div></div>
+<div class="sec"><div class="sh">Motif d'entrée / Réclamation</div><div class="tb">${esc(order.reason||"—")}</div></div>
+<div class="sec"><div class="sh">Travaux à réaliser</div><div class="tasks">${tasksHTML}</div></div>
 <div class="twocol">
-<div class="sec"><div class="sh">Observations a signaler au client</div><div class="tb">${esc(order.observations||"—")}</div></div>
-<div class="sec"><div class="sh">Ventes additionnelles prevues</div><div class="tb">${esc(order.additionalSales||"—")}</div></div>
+<div class="sec"><div class="sh">Observations à signaler au client</div><div class="tb">${esc(order.observations||"—")}</div></div>
+<div class="sec"><div class="sh">Ventes additionnelles prévues</div><div class="tb">${esc(order.additionalSales||"—")}</div></div>
 </div>
 ${exitBlock}
 <div class="sr">
 <div><div class="sl">Signature du client (accord pour les travaux)</div><div class="sb">${sigHTML}</div><div class="sn">${esc(order.clientName||(isPeda?order.teacher||"":""))}</div></div>
 <div><div class="sl">Visa du technicien / enseignant</div><div class="sb"><div style="font-size:11px;color:#ccc;text-align:center;line-height:80px;">..................................</div></div><div class="sn">${isPeda?esc(order.teacher||""):""}</div></div>
 </div>
-<div class="foot">Lycee Gallieni – BTS Maintenance des Vehicules &nbsp;|&nbsp; ${esc(order.orderNum)} &nbsp;|&nbsp; Imprime le ${new Date().toLocaleDateString("fr-FR")}</div>
+<div class="foot">Lycée Gallieni – BTS Maintenance des Véhicules &nbsp;|&nbsp; ${esc(order.orderNum)} &nbsp;|&nbsp; Imprimé le ${new Date().toLocaleDateString("fr-FR")}</div>
 </div></body></html>`;
   return html;
 }

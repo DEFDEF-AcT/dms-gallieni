@@ -742,13 +742,14 @@ function NewOrderForm({ addOrder, teachers, students, user, nav, selOrd, notify 
         <SecTitle>🔍 Motif d'entree</SecTitle>
         <TA value={f.reason} onChange={v=>set("reason",v)} placeholder="Decrire le motif d'entree..." rows={3}/>
         <SecTitle>☑️ Travaux a realiser</SecTitle>
+        <p style={{ color:C.mut, fontSize:12, margin:"0 0 10px" }}>Listez les travaux prevus. Les cases seront <b>cochees par le technicien en atelier</b> au fur et a mesure de la realisation (onglet Travaux de l'ordre).</p>
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(230px,1fr))", gap:8, marginBottom:10 }}>
           {f.tasks.map(t => (
-            <label key={t.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 10px", borderRadius:6, background:"#f1f5f9", border:"1px solid "+C.bdr, cursor:"pointer", fontSize:13, color:C.txt }}>
-              <input type="checkbox" checked={t.done} onChange={()=>set("tasks",f.tasks.map(x=>x.id===t.id?{...x,done:!x.done}:x))} style={{ flexShrink:0 }}/>
+            <div key={t.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 10px", borderRadius:6, background:"#f1f5f9", border:"1px solid "+C.bdr, fontSize:13, color:C.txt }}>
+              <span style={{ width:15, height:15, borderRadius:3, border:"2px solid "+C.bdr, background:"#fff", flexShrink:0 }}/>
               <span style={{ flex:1 }}>{t.label}</span>
-              <button onClick={e=>{e.preventDefault();set("tasks",f.tasks.filter(x=>x.id!==t.id));}} style={{ background:"none", border:"none", color:C.mut, cursor:"pointer", fontSize:16, padding:0, lineHeight:1 }}>×</button>
-            </label>
+              <button onClick={e=>{e.preventDefault();set("tasks",f.tasks.filter(x=>x.id!==t.id));}} title="Retirer ce travail" style={{ background:"none", border:"none", color:C.mut, cursor:"pointer", fontSize:16, padding:0, lineHeight:1 }}>×</button>
+            </div>
           ))}
         </div>
         <div style={{ display:"flex", gap:8 }}>

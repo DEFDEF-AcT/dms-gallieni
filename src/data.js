@@ -120,6 +120,42 @@ export async function deleteDocument(id) {
   if (error) throw error;
 }
 
+// ── Tarifs de l'atelier (lecture : tout le monde ; écriture : admin via RLS) ─
+export function rowToTariff(r) {
+  return {
+    id: r.id, group: r.grp || "", short: r.short || "", label: r.label || "",
+    hint: r.hint || "", price: r.price != null ? Number(r.price) : 0,
+    unit: r.unit || "", pos: r.pos ?? 0, active: r.active !== false,
+  };
+}
+function tariffToRow(t) {
+  const row = {};
+  if ("group" in t) row.grp = t.group;
+  for (const k of ["short", "label", "hint", "unit", "pos", "active"]) if (k in t) row[k] = t[k];
+  if ("price" in t) row.price = Number(t.price) || 0;
+  return row;
+}
+export async function listTariffs() {
+  const { data, error } = await supabase
+    .from("tariffs").select("*").order("grp").order("pos").order("short");
+  if (error) throw error;
+  return data.map(rowToTariff);
+}
+export async function insertTariff(t) {
+  const { data, error } = await supabase.from("tariffs").insert(tariffToRow(t)).select().single();
+  if (error) throw error;
+  return rowToTariff(data);
+}
+export async function updateTariff(id, patch) {
+  const { data, error } = await supabase.from("tariffs").update(tariffToRow(patch)).eq("id", id).select().single();
+  if (error) throw error;
+  return rowToTariff(data);
+}
+export async function deleteTariff(id) {
+  const { error } = await supabase.from("tariffs").delete().eq("id", id);
+  if (error) throw error;
+}
+
 // ── Élèves = profils role='eleve' (comptes « Étudiant Technicien ») ─────────
 export async function listStudents() {
   const { data, error } = await supabase

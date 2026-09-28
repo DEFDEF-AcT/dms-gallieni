@@ -285,9 +285,60 @@ alter publication supabase_realtime add table documents;
 -- ----------------------------------------------------------------------------
 -- MIGRATION (bases déjà en service) : traçabilité VE/VH
 --   alter table orders add column if not exists ev jsonb;
+-- MIGRATION : créer la table tariffs ci-dessous (avec son jeu de départ).
 -- MIGRATION : clôture réservée au staff → (re)créer guard_order_completion()
 --   et le déclencheur trg_order_completion ci-dessus.
 -- ----------------------------------------------------------------------------
+
+-- ============================================================================
+-- TARIFS DE L'ATELIER
+-- Lecture : tout utilisateur connecté (alimente les boutons des estimations et
+-- des factures). Écriture : administrateurs uniquement.
+-- ============================================================================
+create table if not exists tariffs (
+  id         uuid primary key default gen_random_uuid(),
+  grp        text not null default 'Divers',   -- groupe affiché (Main-d'œuvre, Climatisation…)
+  short      text not null default '',         -- libellé du bouton
+  label      text not null default '',         -- libellé porté sur le devis / la facture
+  hint       text default '',                  -- précision affichée sous le bouton
+  price      numeric not null default 0,       -- prix unitaire HT
+  unit       text default '',                  -- h, g, forfait…
+  pos        int not null default 0,           -- ordre d'affichage dans le groupe
+  active     boolean not null default true,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+drop trigger if exists trg_tariffs_touch on tariffs;
+create trigger trg_tariffs_touch before update on tariffs
+  for each row execute function touch_updated_at();
+
+alter table tariffs enable row level security;
+drop policy if exists read_tariffs on tariffs;
+drop policy if exists ins_tariffs  on tariffs;
+drop policy if exists upd_tariffs  on tariffs;
+drop policy if exists del_tariffs  on tariffs;
+create policy read_tariffs on tariffs for select using (auth.role() = 'authenticated');
+create policy ins_tariffs  on tariffs for insert with check (is_admin());
+create policy upd_tariffs  on tariffs for update using (is_admin());
+create policy del_tariffs  on tariffs for delete using (is_admin());
+
+alter publication supabase_realtime add table tariffs;
+
+-- Jeu de départ (taux horaires + forfaits climatisation). Modifiable ensuite
+-- depuis l'application : Administration → 💶 Tarifs.
+insert into tariffs (grp, short, label, hint, price, unit, pos)
+select * from (values
+  ('Main-d''œuvre','T1 · Maintenance périodique','T1 – Main-d''œuvre : maintenance périodique','Toutes opérations de maintenance périodique',20,'h',1),
+  ('Main-d''œuvre','T2 · Maintenance corrective','T2 – Main-d''œuvre : maintenance corrective','Toutes opérations de maintenance corrective',30,'h',2),
+  ('Main-d''œuvre','T3 · Diagnostic','T3 – Main-d''œuvre : diagnostic','',40,'h',3),
+  ('Climatisation','Maintenance circuit frigorigène','Maintenance du circuit de fluide frigorigène : contrôle d''étanchéité, nettoyage du circuit, recharge, contrôle de fonctionnement','Tarif T1 · temps selon barème constructeur',20,'h',1),
+  ('Climatisation','Recharge R134a','Recharge fluide frigorigène R134a','Véhicule avant 2013 · quantité en grammes',0.08,'g',2),
+  ('Climatisation','Recharge R1234yf','Recharge fluide frigorigène R1234yf','Véhicule après 2013 · quantité en grammes',0.12,'g',3),
+  ('Climatisation','Diagnostic gestion thermique','Diagnostic de l''efficacité de la gestion thermique de l''habitacle','Gratuit',0,'forfait',4),
+  ('Climatisation','Diagnostic de fuite','Diagnostic de fuite selon la réglementation en vigueur : injection d''azote et/ou de traceur','',5,'forfait',5)
+) as v(grp, short, label, hint, price, unit, pos)
+where not exists (select 1 from tariffs);
 
 -- ============================================================================
 -- APRÈS EXÉCUTION :

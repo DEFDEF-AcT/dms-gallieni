@@ -7,6 +7,7 @@ import {
   archiveOrder,
   listDocuments, insertDocument, updateDocument, deleteDocument,
   countInspectionsBy,
+  listTariffs, insertTariff, updateTariff, deleteTariff,
 } from "./data";
 
 // Montants / TVA
@@ -21,32 +22,8 @@ function docTotals(doc) {
 }
 const DOC_LABEL = { estimate: "Estimation", invoice: "Facture" };
 
-// ── Tarifs de l'atelier (montants HT) ───────────────────────────────────────
-// Taux horaires de main-d'œuvre T1/T2/T3, et forfaits du circuit de
-// climatisation (document « FORFAIT CLIMATISATION » – Atelier I).
-// s = libellé du bouton · l = libellé porté sur le devis / la facture
-// p = prix unitaire · u = unité · h = précision affichée sous le bouton
-const TARIFS = [
-  { g:"Main-d'œuvre", s:"T1 · Maintenance périodique", p:20, u:"h",
-    l:"T1 – Main-d'œuvre : maintenance périodique", h:"Toutes opérations de maintenance périodique" },
-  { g:"Main-d'œuvre", s:"T2 · Maintenance corrective", p:30, u:"h",
-    l:"T2 – Main-d'œuvre : maintenance corrective", h:"Toutes opérations de maintenance corrective" },
-  { g:"Main-d'œuvre", s:"T3 · Diagnostic", p:40, u:"h",
-    l:"T3 – Main-d'œuvre : diagnostic" },
-  { g:"Climatisation", s:"Maintenance circuit frigorigène", p:20, u:"h",
-    l:"Maintenance du circuit de fluide frigorigène : contrôle d'étanchéité, nettoyage du circuit, recharge, contrôle de fonctionnement",
-    h:"Tarif T1 · temps selon barème constructeur" },
-  { g:"Climatisation", s:"Recharge R134a", p:0.08, u:"g",
-    l:"Recharge fluide frigorigène R134a", h:"Véhicule avant 2013 · quantité en grammes" },
-  { g:"Climatisation", s:"Recharge R1234yf", p:0.12, u:"g",
-    l:"Recharge fluide frigorigène R1234yf", h:"Véhicule après 2013 · quantité en grammes" },
-  { g:"Climatisation", s:"Diagnostic gestion thermique", p:0, u:"forfait",
-    l:"Diagnostic de l'efficacité de la gestion thermique de l'habitacle", h:"Gratuit" },
-  { g:"Climatisation", s:"Diagnostic de fuite", p:5, u:"forfait",
-    l:"Diagnostic de fuite selon la réglementation en vigueur : injection d'azote et/ou de traceur" },
-];
-const TARIF_GROUPS = TARIFS.reduce((a,t) => a.includes(t.g) ? a : [...a, t.g], []);
-
+// Groupes de tarifs présents dans le catalogue, dans l'ordre d'affichage.
+const tarifGroups = (list) => (list||[]).reduce((a,t) => a.includes(t.group) ? a : [...a, t.group], []);
 // Archive un OR en PDF sur le Drive (asynchrone, non bloquant).
 function archiveToDrive(order, notify) {
   archiveOrder({ html: orderHTML(order), folder: orderFolder(order), orderNum: order.orderNum })
@@ -182,6 +159,10 @@ function useStudents(dep) {
   return { students: items, loading, reloadStudents: reload };
 }
 
+function useTariffs(dep) {
+  const { items, reload } = useCollection(listTariffs, "tariffs", dep);
+  return { tariffs: items, reloadTariffs: reload };
+}
 function useDocuments(dep) {
   const { items, loading, reload } = useCollection(listDocuments, "documents", dep);
   const addDocument = useCallback(async (o) => { const r = await insertDocument(o); reload(); return r; }, [reload]);
@@ -1304,7 +1285,44 @@ function HistoryView({ orders, documents, nav, selOrd, openDoc }) {
   );
 }
 
-function AdminPanel({ students, staff, orders, isAdmin, notify, reloadStudents, reloadStaff, currentId }) {
+const TI = { background:"#f8fafc", border:"1px solid "+C.bdr, borderRadius:6, padding:"7px 9px", color:C.txt, fontSize:13, outline:"none", fontFamily:"inherit", width:"100%" };
+
+function TariffRow({ t, onSave, onDelete }) {
+  const snap=()=>({ group:t.group, short:t.short, label:t.label, hint:t.hint, price:String(t.price).replace(".", ","), unit:t.unit });
+  const [f,sf]=useState(snap);
+  useEffect(()=>{ sf(snap()); },[t.id,t.group,t.short,t.label,t.hint,t.price,t.unit]); // eslint-disable-line
+  const set=(k,v)=>sf(p=>({...p,[k]:v}));
+  // on n'écrit en base que si la valeur a réellement changé
+  const blur=(k)=>{ const v=k==="price"?num(f.price):(f[k]||""); if(v!==(k==="price"?t.price:(t[k]||""))) onSave({[k]:v}); };
+  const fld=(k,ph,extra)=>(
+    <input value={f[k]} onChange={e=>set(k,e.target.value)} onBlur={()=>blur(k)} placeholder={ph}
+      list={k==="group"?"tarif-groupes":undefined} style={{...TI,...(extra||{})}}/>
+  );
+  return (
+    <div style={{border:"1px solid "+C.bdr,borderRadius:10,padding:12,background:t.active?C.card:"#f8fafc",opacity:t.active?1:.65}}>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",marginBottom:8}}>
+        <div style={{flex:"1 1 150px"}}><label style={{fontSize:11,color:C.mut}}>Groupe</label>{fld("group","Main-d'œuvre")}</div>
+        <div style={{flex:"2 1 220px"}}><label style={{fontSize:11,color:C.mut}}>Libellé du bouton</label>{fld("short","T1 · Maintenance périodique")}</div>
+        <div style={{flex:"0 0 110px"}}><label style={{fontSize:11,color:C.mut}}>Prix HT (€)</label>{fld("price","20",{textAlign:"right"})}</div>
+        <div style={{flex:"0 0 90px"}}><label style={{fontSize:11,color:C.mut}}>Unité</label>{fld("unit","h, g, forfait")}</div>
+      </div>
+      <div style={{marginBottom:8}}><label style={{fontSize:11,color:C.mut}}>Libellé porté sur le devis / la facture</label>{fld("label","Main-d'œuvre : maintenance périodique")}</div>
+      <div style={{marginBottom:8}}><label style={{fontSize:11,color:C.mut}}>Précision affichée sous le bouton (facultatif)</label>{fld("hint","Temps selon barème constructeur")}</div>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,flexWrap:"wrap"}}>
+        <label style={{display:"flex",alignItems:"center",gap:8,fontSize:12,color:C.sub,cursor:"pointer"}}>
+          <input type="checkbox" checked={!t.active} onChange={e=>onSave({active:!e.target.checked})}/>
+          Masquer ce tarif (sans le supprimer)
+        </label>
+        <span style={{fontSize:12,color:C.mut}}>
+          {t.price===0?"Gratuit":eur(t.price)+(t.unit?" / "+t.unit:"")}
+          <Btn sm ghost danger onClick={()=>onDelete(t)} style={{marginLeft:10}}>🗑 Supprimer</Btn>
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function AdminPanel({ students, staff, orders, tariffs, reloadTariffs, isAdmin, notify, reloadStudents, reloadStaff, currentId }) {
   const [tab,st]=useState("students");
   const [nu,snu]=useState({name:"",group:CLASSES[0],password:""});
   const [busy,sbusy]=useState(false);
@@ -1336,6 +1354,25 @@ function AdminPanel({ students, staff, orders, isAdmin, notify, reloadStudents, 
     try{ await resetPassword(s.id,np); notify("Mot de passe réinitialisé"); }
     catch(e){ console.error(e); notify("Erreur : "+(e.message||e),"error"); }
   };
+  // ── Tarifs (administrateurs uniquement) ──
+  const saveTarif=async(t,patch)=>{
+    try{ await updateTariff(t.id,patch); reloadTariffs(); }
+    catch(e){ console.error(e); notify("Erreur : "+(e.message||e),"error"); }
+  };
+  const delTarif=async(t)=>{
+    if(!window.confirm("Supprimer le tarif « "+(t.short||t.label)+" » ?\nLes devis et factures déjà établis ne sont pas modifiés."))return;
+    try{ await deleteTariff(t.id); reloadTariffs(); notify("Tarif supprimé"); }
+    catch(e){ console.error(e); notify("Erreur : "+(e.message||e),"error"); }
+  };
+  const addTarif=async(grp)=>{
+    const sameGrp=(tariffs||[]).filter(x=>x.group===grp);
+    try{
+      await insertTariff({ group:grp||"Divers", short:"Nouveau tarif", label:"Nouveau tarif", hint:"",
+        price:0, unit:"", pos:sameGrp.reduce((m,x)=>Math.max(m,x.pos||0),0)+1, active:true });
+      reloadTariffs(); notify("Tarif ajouté — complétez ses champs");
+    }catch(e){ console.error(e); notify("Erreur : "+(e.message||e),"error"); }
+  };
+  const [newGrp,setNewGrp]=useState("");
   const stats=[
     {l:"Total interventions",v:orders.length,c:"#2563eb"},{l:"En attente",v:orders.filter(o=>o.status==="en_attente").length,c:"#f59e0b"},
     {l:"En cours",v:orders.filter(o=>o.status==="en_cours").length,c:"#3b82f6"},{l:"Terminées",v:orders.filter(o=>o.status==="termine").length,c:"#059669"},
@@ -1374,7 +1411,7 @@ function AdminPanel({ students, staff, orders, isAdmin, notify, reloadStudents, 
         <Btn sm onClick={()=>csvExport(toCSV(orders),"DMS_Export_"+today()+".csv")} style={{background:"#065f46"}}>⬇ Export complet</Btn>
       </div>
       <div style={{display:"flex",gap:8,marginBottom:16}}>
-        {[["students","🎓 Élèves"],["staff","👤 Personnel"],["stats","📊 Statistiques"]].map(([id,l])=>(
+        {[["students","🎓 Élèves"],["staff","👤 Personnel"],...(isAdmin?[["tariffs","💶 Tarifs"]]:[]),["stats","📊 Statistiques"]].map(([id,l])=>(
           <button key={id} onClick={()=>st(id)} style={{padding:"8px 16px",borderRadius:6,cursor:"pointer",fontSize:13,border:"1px solid "+(tab===id?"#2563eb":C.bdr),background:tab===id?C.acc:"transparent",color:tab===id?"#fff":C.sub}}>{l}</button>
         ))}
       </div>
@@ -1458,6 +1495,45 @@ function AdminPanel({ students, staff, orders, isAdmin, notify, reloadStudents, 
           );})}
         </div>
       )}
+      {tab==="tariffs"&&isAdmin&&(
+        <div style={{display:"flex",flexDirection:"column",gap:14}}>
+          <datalist id="tarif-groupes">{tarifGroups(tariffs).map(g=><option key={g} value={g}/>)}</datalist>
+          <Crd>
+            <h3 style={{color:"#2563eb",fontSize:15,fontWeight:700,margin:"0 0 6px"}}>💶 Tarifs de l'atelier</h3>
+            <p style={{color:C.sub,fontSize:13,margin:0}}>
+              Ces tarifs alimentent les boutons des <b>estimations</b> et des <b>factures</b>. Les modifications sont
+              enregistrées dès que vous quittez un champ, et visibles immédiatement par tout le personnel.
+              Les montants sont <b>hors taxes</b>. Les devis et factures déjà établis conservent leurs montants.
+            </p>
+          </Crd>
+          {tarifGroups(tariffs).map(g=>(
+            <Crd key={g}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,flexWrap:"wrap",marginBottom:10}}>
+                <h4 style={{margin:0,fontSize:14,fontWeight:700,color:C.txt}}>{g}</h4>
+                <Btn sm ghost onClick={()=>addTarif(g)}>+ Ajouter un tarif dans « {g} »</Btn>
+              </div>
+              <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                {tariffs.filter(t=>t.group===g).map(t=>(
+                  <TariffRow key={t.id} t={t} onSave={patch=>saveTarif(t,patch)} onDelete={delTarif}/>
+                ))}
+              </div>
+            </Crd>
+          ))}
+          <Crd>
+            <h4 style={{margin:"0 0 8px",fontSize:14,fontWeight:700,color:C.txt}}>Nouveau groupe de tarifs</h4>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"flex-end"}}>
+              <div style={{flex:"1 1 220px"}}>
+                <label style={{fontSize:11,color:C.mut}}>Nom du groupe</label>
+                <input value={newGrp} onChange={e=>setNewGrp(e.target.value)} placeholder="Pneumatiques, Carrosserie…" style={TI}/>
+              </div>
+              <Btn sm onClick={()=>{ if(!newGrp.trim()){notify("Donnez un nom au groupe","error");return;} addTarif(newGrp.trim()); setNewGrp(""); }}>+ Créer le groupe</Btn>
+            </div>
+          </Crd>
+          {(!tariffs||tariffs.length===0)&&(
+            <Crd><p style={{color:C.mut,fontSize:13,margin:0}}>Aucun tarif pour le moment. Créez un groupe ci-dessus pour commencer.</p></Crd>
+          )}
+        </div>
+      )}
       {tab==="stats"&&(
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(170px,1fr))",gap:12}}>
           {stats.map(s=><Crd key={s.l} style={{textAlign:"center"}}><div style={{fontSize:34,fontWeight:700,color:s.c}}>{s.v}</div><div style={{fontSize:12,color:C.sub,marginTop:4}}>{s.l}</div></Crd>)}
@@ -1507,7 +1583,7 @@ function DocsList({ kind, documents, openDoc, newDoc }) {
   );
 }
 
-function DocForm({ kind, initial, orders, documents, addDocument, editDocument, removeDocument, isAdmin, user, nav, notify }) {
+function DocForm({ kind, initial, orders, documents, tariffs, addDocument, editDocument, removeDocument, isAdmin, user, nav, notify }) {
   const label=DOC_LABEL[kind];
   const back=()=>nav(kind==="estimate"?"estimates":"invoices");
   const [d,sd]=useState(()=> initial ? {...initial} : { kind, orderId:"", clientName:"", clientPhone:"", plate:"", brand:"", model:"", year:"", km:"", items:[], tvaRate:20, signature:"", notes:"", validUntil:"" });
@@ -1537,7 +1613,8 @@ function DocForm({ kind, initial, orders, documents, addDocument, editDocument, 
     };
   });
   const addLine=()=>sd(p=>({...p,items:[...p.items,{label:"",qty:1,unitPrice:0,unit:""}]}));
-  const addTarif=(t)=>sd(p=>({...p,items:[...p.items,{label:t.l,qty:1,unitPrice:t.p,unit:t.u}]}));
+  const addTarif=(t)=>sd(p=>({...p,items:[...p.items,{label:t.label||t.short,qty:1,unitPrice:t.price,unit:t.unit}]}));
+  const tarifs=(tariffs||[]).filter(t=>t.active);
   const setLine=(i,k,v)=>sd(p=>({...p,items:p.items.map((it,j)=>j===i?{...it,[k]:v}:it)}));
   const delLine=(i)=>sd(p=>({...p,items:p.items.filter((_,j)=>j!==i)}));
   const t=docTotals(d);
@@ -1588,20 +1665,23 @@ function DocForm({ kind, initial, orders, documents, addDocument, editDocument, 
         </div>
         <SecTitle>💶 Tarifs de l'atelier</SecTitle>
         <p style={{color:C.mut,fontSize:12,margin:"0 0 10px"}}>Un clic ajoute la ligne au document ; il ne reste qu'à saisir la quantité (heures, grammes…). Les montants sont <b>hors taxes</b>.</p>
-        {TARIF_GROUPS.map(g=>(
+        {tarifs.length===0&&(
+          <p style={{color:C.mut,fontSize:13,margin:"0 0 10px"}}>Aucun tarif enregistré. Un administrateur peut les définir dans <b>Administration → 💶 Tarifs</b>.</p>
+        )}
+        {tarifGroups(tarifs).map(g=>(
           <div key={g} style={{marginBottom:10}}>
             <div style={{fontSize:11,color:C.mut,fontWeight:700,textTransform:"uppercase",letterSpacing:.4,marginBottom:6}}>{g}</div>
             <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
-              {TARIFS.filter(t=>t.g===g).map(t=>(
-                <button key={t.s} type="button" onClick={()=>addTarif(t)} title={t.l}
+              {tarifs.filter(t=>t.group===g).map(t=>(
+                <button key={t.id} type="button" onClick={()=>addTarif(t)} title={t.label}
                   style={{flex:"1 1 200px",maxWidth:340,textAlign:"left",background:"#f8fafc",border:"1px solid "+C.bdr,borderRadius:8,padding:"8px 10px",cursor:"pointer",color:C.txt,fontFamily:"inherit"}}
                   onMouseEnter={e=>{e.currentTarget.style.borderColor="#3b82f6";e.currentTarget.style.background="#eff6ff";}}
                   onMouseLeave={e=>{e.currentTarget.style.borderColor=C.bdr;e.currentTarget.style.background="#f8fafc";}}>
                   <span style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:8}}>
-                    <span style={{fontSize:13,fontWeight:600}}>{t.s}</span>
-                    <span style={{fontSize:13,fontWeight:700,color:t.p===0?"#15803d":"#1d4ed8",whiteSpace:"nowrap"}}>{t.p===0?"Gratuit":eur(t.p)+" / "+t.u}</span>
+                    <span style={{fontSize:13,fontWeight:600}}>{t.short||t.label}</span>
+                    <span style={{fontSize:13,fontWeight:700,color:t.price===0?"#15803d":"#1d4ed8",whiteSpace:"nowrap"}}>{t.price===0?"Gratuit":eur(t.price)+(t.unit?" / "+t.unit:"")}</span>
                   </span>
-                  {t.h&&<span style={{display:"block",fontSize:11,color:C.mut,marginTop:2}}>{t.h}</span>}
+                  {t.hint&&<span style={{display:"block",fontSize:11,color:C.mut,marginTop:2}}>{t.hint}</span>}
                 </button>
               ))}
             </div>
@@ -1741,6 +1821,7 @@ export default function DMSApp() {
   const { orders, addOrder, editOrder, removeOrder } = useOrders(cu?.id);
   const { students, reloadStudents } = useStudents(cu?.id);
   const { documents, addDocument, editDocument, removeDocument } = useDocuments(cu?.id);
+  const { tariffs, reloadTariffs } = useTariffs(cu?.id);
   const [staff,setStaff]=useState([]);
   const [page,sp]=useState("dashboard");
   const [selId,ssi]=useState(null); const [sideOpen,sso]=useState(false);
@@ -1766,10 +1847,10 @@ export default function DMSApp() {
     if(page==="order-detail") return selId?<OrderDetail orderId={selId} orders={orders} editOrder={editOrder} removeOrder={removeOrder} isAdmin={isAdmin} user={cu} nav={nav} notify={notify} students={students}/>:null;
     if(page==="estimates")    return <DocsList kind="estimate" documents={documents} openDoc={openDoc} newDoc={()=>newDoc("estimate")}/>;
     if(page==="invoices")     return <DocsList kind="invoice" documents={documents} openDoc={openDoc} newDoc={()=>newDoc("invoice")}/>;
-    if(page==="doc-form")     return <DocForm kind={docKind} initial={selDoc?documents.find(d=>d.id===selDoc):null} orders={orders} documents={documents} addDocument={addDocument} editDocument={editDocument} removeDocument={removeDocument} isAdmin={isAdmin} user={cu} nav={nav} notify={notify}/>;
+    if(page==="doc-form")     return <DocForm kind={docKind} initial={selDoc?documents.find(d=>d.id===selDoc):null} orders={orders} documents={documents} tariffs={tariffs} addDocument={addDocument} editDocument={editDocument} removeDocument={removeDocument} isAdmin={isAdmin} user={cu} nav={nav} notify={notify}/>;
     if(page==="history")      return<HistoryView orders={orders} documents={documents} nav={nav} selOrd={ssi} openDoc={openDoc}/>;
     if(page==="account")      return isStaff?<AccountPanel user={cu} orders={orders} documents={documents} students={students} notify={notify}/>:null;
-    if(page==="admin")        return isStaff?<AdminPanel students={students} staff={staff} orders={orders} isAdmin={isAdmin} notify={notify} reloadStudents={reloadStudents} reloadStaff={reloadStaff} currentId={cu.id}/>:null;
+    if(page==="admin")        return isStaff?<AdminPanel students={students} staff={staff} orders={orders} tariffs={tariffs} reloadTariffs={reloadTariffs} isAdmin={isAdmin} notify={notify} reloadStudents={reloadStudents} reloadStaff={reloadStaff} currentId={cu.id}/>:null;
     return null;
   };
   return (

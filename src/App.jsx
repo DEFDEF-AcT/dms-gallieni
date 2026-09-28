@@ -16,10 +16,17 @@ const eur = (n) => num(n).toLocaleString("fr-FR", { style: "currency", currency:
 // Quantité à la française sur les documents : 1.5 → « 1,5 », 650 → « 650 ».
 const qte = (q) => { const n = Number(q); return (q === "" || q == null || !Number.isFinite(n)) ? String(q ?? "") : n.toLocaleString("fr-FR"); };
 function docTotals(doc) {
-  const ht = (doc.items || []).reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.unitPrice) || 0), 0);
-  const tva = ht * (Number(doc.tvaRate) || 0) / 100;
-  return { ht, tva, ttc: ht + tva };
+  const somme = (doc.items || []).reduce((s, it) => s + num(it.qty) * num(it.unitPrice), 0);
+  const taux = num(doc.tvaRate);
+  if (doc.priceMode === "ttc") {
+    // prix payés par le client : on retrouve le HT par division (« dont TVA »)
+    const ttc = somme, ht = taux ? ttc / (1 + taux / 100) : ttc;
+    return { ht, tva: ttc - ht, ttc, ttcMode: true };
+  }
+  const tva = somme * taux / 100;
+  return { ht: somme, tva, ttc: somme + tva, ttcMode: false };
 }
+const isTTC = (doc) => doc?.priceMode === "ttc";
 const DOC_LABEL = { estimate: "Estimation", invoice: "Facture" };
 
 // Groupes de tarifs présents dans le catalogue, dans l'ordre d'affichage.
@@ -376,7 +383,8 @@ function docHTML(doc) {
 <div class="sec"><div class="sh">Client</div><div class="vl">${esc(doc.clientName||"—")}</div><div class="bs">${esc(doc.clientPhone||"")}</div></div>
 <div class="sec"><div class="sh">Véhicule</div><div class="vl">${esc(doc.plate||"—")}</div><div class="bs">${esc(doc.brand||"")} ${esc(doc.model||"")} ${doc.year?"("+esc(doc.year)+")":""} ${doc.km?"· "+esc(doc.km)+" km":""}</div></div></div>
 <div class="sec"><div class="sh">Détail des prestations</div>
-<table><thead><tr><th>Désignation</th><th class="r">Qté</th><th class="r">PU HT</th><th class="r">Total HT</th></tr></thead><tbody>${rows}</tbody></table>
+<table><thead><tr><th>Désignation</th><th class="r">Qté</th><th class="r">PU ${isTTC(doc)?"TTC":"HT"}</th><th class="r">Total ${isTTC(doc)?"TTC":"HT"}</th></tr></thead><tbody>${rows}</tbody></table>
+${isTTC(doc)?`<div style="font-size:9.5px;color:#666;margin-top:4px;">Prix indiqués toutes taxes comprises.</div>`:""}
 <div class="tot"><div><span>Total HT</span><span>${eur(t.ht)}</span></div><div><span>TVA (${esc(String(doc.tvaRate??0))}%)</span><span>${eur(t.tva)}</span></div><div class="ttc"><span>Total TTC</span><span>${eur(t.ttc)}</span></div></div></div>
 ${doc.notes?`<div class="sec"><div class="sh">Notes</div><div class="tb">${esc(doc.notes)}</div></div>`:""}
 ${sigBlock}
@@ -1303,7 +1311,7 @@ function TariffRow({ t, onSave, onDelete }) {
       <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",marginBottom:8}}>
         <div style={{flex:"1 1 150px"}}><label style={{fontSize:11,color:C.mut}}>Groupe</label>{fld("group","Main-d'œuvre")}</div>
         <div style={{flex:"2 1 220px"}}><label style={{fontSize:11,color:C.mut}}>Libellé du bouton</label>{fld("short","T1 · Maintenance périodique")}</div>
-        <div style={{flex:"0 0 110px"}}><label style={{fontSize:11,color:C.mut}}>Prix HT (€)</label>{fld("price","20",{textAlign:"right"})}</div>
+        <div style={{flex:"0 0 110px"}}><label style={{fontSize:11,color:C.mut}}>Prix TTC (€)</label>{fld("price","20",{textAlign:"right"})}</div>
         <div style={{flex:"0 0 90px"}}><label style={{fontSize:11,color:C.mut}}>Unité</label>{fld("unit","h, g, forfait")}</div>
       </div>
       <div style={{marginBottom:8}}><label style={{fontSize:11,color:C.mut}}>Libellé porté sur le devis / la facture</label>{fld("label","Main-d'œuvre : maintenance périodique")}</div>
@@ -1503,7 +1511,9 @@ function AdminPanel({ students, staff, orders, tariffs, reloadTariffs, isAdmin, 
             <p style={{color:C.sub,fontSize:13,margin:0}}>
               Ces tarifs alimentent les boutons des <b>estimations</b> et des <b>factures</b>. Les modifications sont
               enregistrées dès que vous quittez un champ, et visibles immédiatement par tout le personnel.
-              Les montants sont <b>hors taxes</b>. Les devis et factures déjà établis conservent leurs montants.
+              Les montants saisis ici sont ceux <b>payés par le client, toutes taxes comprises</b> : les documents sont
+              établis en TTC (chaque document peut être basculé en HT si besoin). Les devis et factures déjà établis
+              conservent leurs montants.
             </p>
           </Crd>
           {tarifGroups(tariffs).map(g=>(
@@ -1586,7 +1596,7 @@ function DocsList({ kind, documents, openDoc, newDoc }) {
 function DocForm({ kind, initial, orders, documents, tariffs, addDocument, editDocument, removeDocument, isAdmin, user, nav, notify }) {
   const label=DOC_LABEL[kind];
   const back=()=>nav(kind==="estimate"?"estimates":"invoices");
-  const [d,sd]=useState(()=> initial ? {...initial} : { kind, orderId:"", clientName:"", clientPhone:"", plate:"", brand:"", model:"", year:"", km:"", items:[], tvaRate:20, signature:"", notes:"", validUntil:"" });
+  const [d,sd]=useState(()=> initial ? {...initial} : { kind, orderId:"", clientName:"", clientPhone:"", plate:"", brand:"", model:"", year:"", km:"", items:[], tvaRate:20, priceMode:"ttc", signature:"", notes:"", validUntil:"" });
   const [busy,sbusy]=useState(false);
   const [srcEst,setSrcEst]=useState("");
   const isNew=!d.id;
@@ -1599,7 +1609,7 @@ function DocForm({ kind, initial, orders, documents, tariffs, addDocument, editD
       plate:e.plate||"", brand:e.brand||"", model:e.model||"",
       year:e.year||"", km:e.km||"",
       items:(e.items&&e.items.length)?e.items.map(it=>({...it})):p.items,
-      tvaRate:e.tvaRate??p.tvaRate, notes:e.notes||p.notes };
+      tvaRate:e.tvaRate??p.tvaRate, priceMode:e.priceMode||p.priceMode, notes:e.notes||p.notes };
   }); };
   const set=(k,v)=>sd(p=>({...p,[k]:v}));
   const linkOrder=(oid)=>sd(p=>{
@@ -1620,7 +1630,7 @@ function DocForm({ kind, initial, orders, documents, tariffs, addDocument, editD
   const t=docTotals(d);
   const save=async()=>{
     if(!d.clientName.trim()){notify("Le nom du client est obligatoire","error");return;}
-    const clean={...d, tvaRate:Number(d.tvaRate)||0,
+    const clean={...d, tvaRate:num(d.tvaRate), priceMode:d.priceMode==="ht"?"ht":"ttc",
       items:d.items.map(it=>({label:it.label||"",qty:Number(it.qty)||0,unitPrice:Number(it.unitPrice)||0,unit:it.unit||""}))};
     sbusy(true);
     try{
@@ -1664,7 +1674,7 @@ function DocForm({ kind, initial, orders, documents, tariffs, addDocument, editD
           <Inp label="Km" value={d.km} onChange={v=>set("km",v)}/>
         </div>
         <SecTitle>💶 Tarifs de l'atelier</SecTitle>
-        <p style={{color:C.mut,fontSize:12,margin:"0 0 10px"}}>Un clic ajoute la ligne au document ; il ne reste qu'à saisir la quantité (heures, grammes…). Les montants sont <b>hors taxes</b>.</p>
+        <p style={{color:C.mut,fontSize:12,margin:"0 0 10px"}}>Un clic ajoute la ligne au document ; il ne reste qu'à saisir la quantité (heures, grammes…). Les montants sont repris {isTTC(d)?<b>tels quels : ce sont ceux payés par le client (TTC)</b>:<b>comme des prix hors taxes</b>}.</p>
         {tarifs.length===0&&(
           <p style={{color:C.mut,fontSize:13,margin:"0 0 10px"}}>Aucun tarif enregistré. Un administrateur peut les définir dans <b>Administration → 💶 Tarifs</b>.</p>
         )}
@@ -1688,10 +1698,21 @@ function DocForm({ kind, initial, orders, documents, tariffs, addDocument, editD
           </div>
         ))}
         <SecTitle>📋 Lignes (prestations / pièces)</SecTitle>
+        <div style={{display:"flex",gap:12,alignItems:"flex-end",flexWrap:"wrap",marginBottom:12}}>
+          <div style={{flex:"0 1 320px"}}>
+            <Sel label="Prix saisis" value={isTTC(d)?"ttc":"ht"} onChange={v=>set("priceMode",v)}
+              opts={[{v:"ttc",l:"TTC — montants payés par le client"},{v:"ht",l:"HT — la TVA s'ajoute au montant"}]}/>
+          </div>
+          <p style={{flex:"1 1 220px",color:C.mut,fontSize:12,margin:0}}>
+            {isTTC(d)
+              ? "Le total TTC est la somme des lignes ; la TVA est calculée à l'intérieur de ce montant."
+              : "La TVA est ajoutée au total des lignes pour obtenir le montant payé par le client."}
+          </p>
+        </div>
         <div style={{overflowX:"auto"}}>
          <div style={{minWidth:540,display:"flex",flexDirection:"column",gap:6}}>
           <div style={{display:"flex",gap:8,fontSize:11,color:C.mut,fontWeight:600,padding:"0 4px"}}>
-            <span style={{flex:1}}>Désignation</span><span style={{width:62,textAlign:"right"}}>Qté</span><span style={{width:52}}>Unité</span><span style={{width:88,textAlign:"right"}}>PU HT</span><span style={{width:92,textAlign:"right"}}>Total</span><span style={{width:24}}/>
+            <span style={{flex:1}}>Désignation</span><span style={{width:62,textAlign:"right"}}>Qté</span><span style={{width:52}}>Unité</span><span style={{width:88,textAlign:"right"}}>{isTTC(d)?"PU TTC":"PU HT"}</span><span style={{width:92,textAlign:"right"}}>Total</span><span style={{width:24}}/>
           </div>
           {d.items.map((it,i)=>{const lt=(Number(it.qty)||0)*(Number(it.unitPrice)||0);return(
             <div key={i} style={{display:"flex",gap:8,alignItems:"center"}}>

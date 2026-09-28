@@ -233,6 +233,9 @@ create table if not exists documents (
   year text default '', km text default '',
   items        jsonb default '[]'::jsonb,          -- [{label, qty, unitPrice}]
   tva_rate     numeric default 20,
+  -- 'ttc' : prix saisis TVA incluse (défaut de l'application, tarifs atelier TTC)
+  -- 'ht'  : la TVA s'ajoute au total des lignes
+  price_mode   text not null default 'ht' check (price_mode in ('ht','ttc')),
   signature    text default '',                    -- accord client (estimations)
   notes        text default '',
   valid_until  date,                               -- validité (devis) / échéance (facture)
@@ -286,6 +289,8 @@ alter publication supabase_realtime add table documents;
 -- MIGRATION (bases déjà en service) : traçabilité VE/VH
 --   alter table orders add column if not exists ev jsonb;
 -- MIGRATION : créer la table tariffs ci-dessous (avec son jeu de départ).
+-- MIGRATION : alter table documents add column if not exists price_mode text
+--   not null default 'ht' check (price_mode in ('ht','ttc'));
 -- MIGRATION : clôture réservée au staff → (re)créer guard_order_completion()
 --   et le déclencheur trg_order_completion ci-dessus.
 -- ----------------------------------------------------------------------------

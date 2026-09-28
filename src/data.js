@@ -84,6 +84,8 @@ export function rowToDoc(r) {
     year: r.year || "", km: r.km || "",
     items: Array.isArray(r.items) ? r.items : [],
     tvaRate: r.tva_rate != null ? Number(r.tva_rate) : 20,
+    // 'ttc' : prix saisis TVA incluse · 'ht' : TVA ajoutée (documents antérieurs)
+    priceMode: r.price_mode === "ttc" ? "ttc" : "ht",
     signature: r.signature || "", notes: r.notes || "",
     validUntil: r.valid_until || "",
     createdBy: r.created_by || "", createdAt: r.created_at,

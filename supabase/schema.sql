@@ -232,7 +232,7 @@ create table if not exists documents (
   plate text default '', brand text default '', model text default '',
   year text default '', km text default '',
   items        jsonb default '[]'::jsonb,          -- [{label, qty, unitPrice}]
-  tva_rate     numeric default 20,
+  tva_rate     numeric default 20,        -- l'application crée les documents à 0
   -- 'ttc' : prix saisis TVA incluse (défaut de l'application, tarifs atelier TTC)
   -- 'ht'  : la TVA s'ajoute au total des lignes
   price_mode   text not null default 'ht' check (price_mode in ('ht','ttc')),

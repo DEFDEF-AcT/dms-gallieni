@@ -383,9 +383,9 @@ function docHTML(doc) {
 <div class="sec"><div class="sh">Client</div><div class="vl">${esc(doc.clientName||"—")}</div><div class="bs">${esc(doc.clientPhone||"")}</div></div>
 <div class="sec"><div class="sh">Véhicule</div><div class="vl">${esc(doc.plate||"—")}</div><div class="bs">${esc(doc.brand||"")} ${esc(doc.model||"")} ${doc.year?"("+esc(doc.year)+")":""} ${doc.km?"· "+esc(doc.km)+" km":""}</div></div></div>
 <div class="sec"><div class="sh">Détail des prestations</div>
-<table><thead><tr><th>Désignation</th><th class="r">Qté</th><th class="r">PU ${isTTC(doc)?"TTC":"HT"}</th><th class="r">Total ${isTTC(doc)?"TTC":"HT"}</th></tr></thead><tbody>${rows}</tbody></table>
-${isTTC(doc)?`<div style="font-size:9.5px;color:#666;margin-top:4px;">Prix indiqués toutes taxes comprises.</div>`:""}
-<div class="tot"><div><span>Total HT</span><span>${eur(t.ht)}</span></div><div><span>TVA (${esc(String(doc.tvaRate??0))}%)</span><span>${eur(t.tva)}</span></div><div class="ttc"><span>Total TTC</span><span>${eur(t.ttc)}</span></div></div></div>
+<table><thead><tr><th>Désignation</th><th class="r">Qté</th><th class="r">PU${isTTC(doc)?(num(doc.tvaRate)?" TTC":""):" HT"}</th><th class="r">Total${isTTC(doc)?(num(doc.tvaRate)?" TTC":""):" HT"}</th></tr></thead><tbody>${rows}</tbody></table>
+${isTTC(doc)&&num(doc.tvaRate)?`<div style="font-size:9.5px;color:#666;margin-top:4px;">Prix indiqués toutes taxes comprises.</div>`:""}
+<div class="tot">${num(doc.tvaRate)?`<div><span>Total HT</span><span>${eur(t.ht)}</span></div><div><span>TVA (${esc(String(doc.tvaRate??0))} %)</span><span>${eur(t.tva)}</span></div>`:""}<div class="ttc"><span>Total${num(doc.tvaRate)?" TTC":""}</span><span>${eur(t.ttc)}</span></div></div></div>
 ${doc.notes?`<div class="sec"><div class="sh">Notes</div><div class="tb">${esc(doc.notes)}</div></div>`:""}
 ${sigBlock}
 <div class="foot">Lycée Gallieni – BTS Maintenance des Véhicules &nbsp;|&nbsp; ${esc(doc.docNum||"")} &nbsp;|&nbsp; Imprimé le ${new Date().toLocaleDateString("fr-FR")}</div>
@@ -1596,7 +1596,7 @@ function DocsList({ kind, documents, openDoc, newDoc }) {
 function DocForm({ kind, initial, orders, documents, tariffs, addDocument, editDocument, removeDocument, isAdmin, user, nav, notify }) {
   const label=DOC_LABEL[kind];
   const back=()=>nav(kind==="estimate"?"estimates":"invoices");
-  const [d,sd]=useState(()=> initial ? {...initial} : { kind, orderId:"", clientName:"", clientPhone:"", plate:"", brand:"", model:"", year:"", km:"", items:[], tvaRate:20, priceMode:"ttc", signature:"", notes:"", validUntil:"" });
+  const [d,sd]=useState(()=> initial ? {...initial} : { kind, orderId:"", clientName:"", clientPhone:"", plate:"", brand:"", model:"", year:"", km:"", items:[], tvaRate:0, priceMode:"ttc", signature:"", notes:"", validUntil:"" });
   const [busy,sbusy]=useState(false);
   const [srcEst,setSrcEst]=useState("");
   const isNew=!d.id;
@@ -1705,14 +1705,16 @@ function DocForm({ kind, initial, orders, documents, tariffs, addDocument, editD
           </div>
           <p style={{flex:"1 1 220px",color:C.mut,fontSize:12,margin:0}}>
             {isTTC(d)
-              ? "Le total TTC est la somme des lignes ; la TVA est calculée à l'intérieur de ce montant."
+              ? (num(d.tvaRate)>0
+                  ? "Le total est la somme des lignes ; la TVA est calculée à l'intérieur de ce montant."
+                  : "Le total est la somme des lignes. TVA à 0 % : aucune taxe n'est ajoutée ni décomptée.")
               : "La TVA est ajoutée au total des lignes pour obtenir le montant payé par le client."}
           </p>
         </div>
         <div style={{overflowX:"auto"}}>
          <div style={{minWidth:540,display:"flex",flexDirection:"column",gap:6}}>
           <div style={{display:"flex",gap:8,fontSize:11,color:C.mut,fontWeight:600,padding:"0 4px"}}>
-            <span style={{flex:1}}>Désignation</span><span style={{width:62,textAlign:"right"}}>Qté</span><span style={{width:52}}>Unité</span><span style={{width:88,textAlign:"right"}}>{isTTC(d)?"PU TTC":"PU HT"}</span><span style={{width:92,textAlign:"right"}}>Total</span><span style={{width:24}}/>
+            <span style={{flex:1}}>Désignation</span><span style={{width:62,textAlign:"right"}}>Qté</span><span style={{width:52}}>Unité</span><span style={{width:88,textAlign:"right"}}>{isTTC(d)?(num(d.tvaRate)>0?"PU TTC":"PU"):"PU HT"}</span><span style={{width:92,textAlign:"right"}}>Total</span><span style={{width:24}}/>
           </div>
           {d.items.map((it,i)=>{const lt=(Number(it.qty)||0)*(Number(it.unitPrice)||0);return(
             <div key={i} style={{display:"flex",gap:8,alignItems:"center"}}>
@@ -1729,12 +1731,12 @@ function DocForm({ kind, initial, orders, documents, tariffs, addDocument, editD
         </div>
         <div style={{display:"flex",justifyContent:"flex-end",marginTop:14}}>
           <div style={{width:280,display:"flex",flexDirection:"column",gap:6}}>
-            <div style={{display:"flex",justifyContent:"space-between",fontSize:13,color:C.sub}}><span>Total HT</span><b style={{color:C.txt}}>{eur(t.ht)}</b></div>
+            {num(d.tvaRate)>0&&<div style={{display:"flex",justifyContent:"space-between",fontSize:13,color:C.sub}}><span>Total HT</span><b style={{color:C.txt}}>{eur(t.ht)}</b></div>}
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:13,color:C.sub}}>
               <span style={{display:"flex",alignItems:"center",gap:6}}>TVA <input type="number" value={d.tvaRate} onChange={e=>set("tvaRate",e.target.value)} style={{width:54,background:"#f1f5f9",border:"1px solid "+C.bdr,borderRadius:6,padding:"3px 6px",color:C.txt,fontSize:12,textAlign:"right"}}/>%</span>
               <b style={{color:C.txt}}>{eur(t.tva)}</b>
             </div>
-            <div style={{display:"flex",justifyContent:"space-between",fontSize:15,fontWeight:700,color:"#1d4ed8",borderTop:"2px solid "+C.bdr,paddingTop:6}}><span>Total TTC</span><span>{eur(t.ttc)}</span></div>
+            <div style={{display:"flex",justifyContent:"space-between",fontSize:15,fontWeight:700,color:"#1d4ed8",borderTop:"2px solid "+C.bdr,paddingTop:6}}><span>Total{num(d.tvaRate)>0?" TTC":""}</span><span>{eur(t.ttc)}</span></div>
           </div>
         </div>
         <SecTitle>📝 Notes & validité</SecTitle>

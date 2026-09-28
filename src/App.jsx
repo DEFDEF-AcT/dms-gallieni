@@ -385,7 +385,7 @@ function docHTML(doc) {
 <div class="sec"><div class="sh">Détail des prestations</div>
 <table><thead><tr><th>Désignation</th><th class="r">Qté</th><th class="r">PU${isTTC(doc)?(num(doc.tvaRate)?" TTC":""):" HT"}</th><th class="r">Total${isTTC(doc)?(num(doc.tvaRate)?" TTC":""):" HT"}</th></tr></thead><tbody>${rows}</tbody></table>
 ${isTTC(doc)&&num(doc.tvaRate)?`<div style="font-size:9.5px;color:#666;margin-top:4px;">Prix indiqués toutes taxes comprises.</div>`:""}
-<div class="tot">${num(doc.tvaRate)?`<div><span>Total HT</span><span>${eur(t.ht)}</span></div><div><span>TVA (${esc(String(doc.tvaRate??0))} %)</span><span>${eur(t.tva)}</span></div>`:""}<div class="ttc"><span>Total${num(doc.tvaRate)?" TTC":""}</span><span>${eur(t.ttc)}</span></div></div></div>
+<div class="tot">${num(doc.tvaRate)?`<div><span>Total HT</span><span>${eur(t.ht)}</span></div><div><span>TVA (${esc(String(doc.tvaRate??0))} %)</span><span>${eur(t.tva)}</span></div>`:`<div><span>TVA non applicable - 0%</span><span>${eur(0)}</span></div>`}<div class="ttc"><span>Total${num(doc.tvaRate)?" TTC":""}</span><span>${eur(t.ttc)}</span></div></div></div>
 ${doc.notes?`<div class="sec"><div class="sh">Notes</div><div class="tb">${esc(doc.notes)}</div></div>`:""}
 ${sigBlock}
 <div class="foot">Lycée Gallieni – BTS Maintenance des Véhicules &nbsp;|&nbsp; ${esc(doc.docNum||"")} &nbsp;|&nbsp; Imprimé le ${new Date().toLocaleDateString("fr-FR")}</div>
@@ -1736,6 +1736,11 @@ function DocForm({ kind, initial, orders, documents, tariffs, addDocument, editD
               <span style={{display:"flex",alignItems:"center",gap:6}}>TVA <input type="number" value={d.tvaRate} onChange={e=>set("tvaRate",e.target.value)} style={{width:54,background:"#f1f5f9",border:"1px solid "+C.bdr,borderRadius:6,padding:"3px 6px",color:C.txt,fontSize:12,textAlign:"right"}}/>%</span>
               <b style={{color:C.txt}}>{eur(t.tva)}</b>
             </div>
+            {num(d.tvaRate)===0&&(
+              <div style={{fontSize:11,color:C.mut,textAlign:"right",marginTop:-2}}>
+                Le document portera la mention « TVA non applicable - 0% ».
+              </div>
+            )}
             <div style={{display:"flex",justifyContent:"space-between",fontSize:15,fontWeight:700,color:"#1d4ed8",borderTop:"2px solid "+C.bdr,paddingTop:6}}><span>Total{num(d.tvaRate)>0?" TTC":""}</span><span>{eur(t.ttc)}</span></div>
           </div>
         </div>

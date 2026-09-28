@@ -1,11 +1,16 @@
 // Edge Function : gestion des comptes élèves (« Étudiant Technicien »).
-// Réservée à l'administrateur. Crée/supprime/réinitialise des comptes Supabase Auth
-// en utilisant la clé service_role (jamais exposée au frontend).
+// Crée/supprime/réinitialise des comptes Supabase Auth avec la clé service_role
+// (jamais exposée au frontend).
 //
-// Déploiement (dashboard Supabase → Edge Functions → Create a new function,
-// nom EXACT « manage-students », coller ce code, Deploy). Les variables
-// SUPABASE_URL / SUPABASE_ANON_KEY / SUPABASE_SERVICE_ROLE_KEY sont injectées
-// automatiquement par Supabase.
+// Qui peut quoi :
+//   - administrateur : tout, y compris créer des comptes du personnel ;
+//   - enseignant     : créer des élèves, puis supprimer / réinitialiser
+//                      UNIQUEMENT ceux qu'il a lui-même créés (profiles.created_by) ;
+//   - élève          : aucun accès.
+//
+// Déploiement (dashboard Supabase → Edge Functions → manage-students → Deploy,
+// ou `supabase functions deploy manage-students`). Les variables SUPABASE_URL /
+// SUPABASE_ANON_KEY / SUPABASE_SERVICE_ROLE_KEY sont injectées par Supabase.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 // Domaine interne des emails synthétiques (l'utilisateur ne le voit jamais ; il tape son identifiant).

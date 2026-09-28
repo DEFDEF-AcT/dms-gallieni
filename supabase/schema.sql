@@ -341,7 +341,8 @@ select * from (values
   ('Climatisation','Recharge R134a','Recharge fluide frigorigène R134a','Véhicule avant 2013 · quantité en grammes',0.08,'g',2),
   ('Climatisation','Recharge R1234yf','Recharge fluide frigorigène R1234yf','Véhicule après 2013 · quantité en grammes',0.12,'g',3),
   ('Climatisation','Diagnostic gestion thermique','Diagnostic de l''efficacité de la gestion thermique de l''habitacle','Gratuit',0,'forfait',4),
-  ('Climatisation','Diagnostic de fuite','Diagnostic de fuite selon la réglementation en vigueur : injection d''azote et/ou de traceur','',5,'forfait',5)
+  ('Climatisation','Diagnostic de fuite','Diagnostic de fuite selon la réglementation en vigueur : injection d''azote et/ou de traceur','',5,'forfait',5),
+  ('Frais annexes','Gestion des déchets industriels','Participation aux frais de gestion des déchets industriels','Ligne facultative : à ajouter selon l''intervention',5,'forfait',1)
 ) as v(grp, short, label, hint, price, unit, pos)
 where not exists (select 1 from tariffs);
 

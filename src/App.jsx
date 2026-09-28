@@ -12,12 +12,40 @@ import {
 // Montants / TVA
 const num = (v) => { const n = Number(String(v ?? "").replace(/\s/g, "").replace(",", ".")); return Number.isFinite(n) ? n : 0; };
 const eur = (n) => num(n).toLocaleString("fr-FR", { style: "currency", currency: "EUR" });
+// Quantité à la française sur les documents : 1.5 → « 1,5 », 650 → « 650 ».
+const qte = (q) => { const n = Number(q); return (q === "" || q == null || !Number.isFinite(n)) ? String(q ?? "") : n.toLocaleString("fr-FR"); };
 function docTotals(doc) {
   const ht = (doc.items || []).reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.unitPrice) || 0), 0);
   const tva = ht * (Number(doc.tvaRate) || 0) / 100;
   return { ht, tva, ttc: ht + tva };
 }
 const DOC_LABEL = { estimate: "Estimation", invoice: "Facture" };
+
+// ── Tarifs de l'atelier (montants HT) ───────────────────────────────────────
+// Taux horaires de main-d'œuvre T1/T2/T3, et forfaits du circuit de
+// climatisation (document « FORFAIT CLIMATISATION » – Atelier I).
+// s = libellé du bouton · l = libellé porté sur le devis / la facture
+// p = prix unitaire · u = unité · h = précision affichée sous le bouton
+const TARIFS = [
+  { g:"Main-d'œuvre", s:"T1 · Maintenance périodique", p:20, u:"h",
+    l:"T1 – Main-d'œuvre : maintenance périodique", h:"Toutes opérations de maintenance périodique" },
+  { g:"Main-d'œuvre", s:"T2 · Maintenance corrective", p:30, u:"h",
+    l:"T2 – Main-d'œuvre : maintenance corrective", h:"Toutes opérations de maintenance corrective" },
+  { g:"Main-d'œuvre", s:"T3 · Diagnostic", p:40, u:"h",
+    l:"T3 – Main-d'œuvre : diagnostic" },
+  { g:"Climatisation", s:"Maintenance circuit frigorigène", p:20, u:"h",
+    l:"Maintenance du circuit de fluide frigorigène : contrôle d'étanchéité, nettoyage du circuit, recharge, contrôle de fonctionnement",
+    h:"Tarif T1 · temps selon barème constructeur" },
+  { g:"Climatisation", s:"Recharge R134a", p:0.08, u:"g",
+    l:"Recharge fluide frigorigène R134a", h:"Véhicule avant 2013 · quantité en grammes" },
+  { g:"Climatisation", s:"Recharge R1234yf", p:0.12, u:"g",
+    l:"Recharge fluide frigorigène R1234yf", h:"Véhicule après 2013 · quantité en grammes" },
+  { g:"Climatisation", s:"Diagnostic gestion thermique", p:0, u:"forfait",
+    l:"Diagnostic de l'efficacité de la gestion thermique de l'habitacle", h:"Gratuit" },
+  { g:"Climatisation", s:"Diagnostic de fuite", p:5, u:"forfait",
+    l:"Diagnostic de fuite selon la réglementation en vigueur : injection d'azote et/ou de traceur" },
+];
+const TARIF_GROUPS = TARIFS.reduce((a,t) => a.includes(t.g) ? a : [...a, t.g], []);
 
 // Archive un OR en PDF sur le Drive (asynchrone, non bloquant).
 function archiveToDrive(order, notify) {
@@ -350,7 +378,7 @@ function docHTML(doc) {
   const t = docTotals(doc);
   const rows = (doc.items||[]).map((it,i)=>{
     const lt=(Number(it.qty)||0)*(Number(it.unitPrice)||0);
-    return `<tr${i%2?' style="background:#f9f9f9"':''}><td>${esc(it.label||"")}</td><td class="r">${esc(String(it.qty??""))}</td><td class="r">${eur(it.unitPrice)}</td><td class="r">${eur(lt)}</td></tr>`;
+    return `<tr${i%2?' style="background:#f9f9f9"':''}><td>${esc(it.label||"")}</td><td class="r">${esc(qte(it.qty))}${it.unit?" "+esc(it.unit):""}</td><td class="r">${eur(it.unitPrice)}</td><td class="r">${eur(lt)}</td></tr>`;
   }).join("") || `<tr><td colspan="4" style="color:#999">Aucune ligne</td></tr>`;
   const sigBlock = isEst ? `<div class="sr">
     <div><div class="sl">Bon pour accord — Signature du client</div><div class="sb">${doc.signature?`<img src="${doc.signature}" style="max-height:72px;max-width:100%;display:block;margin:auto;"/>`:`<div style="color:#bbb;line-height:80px;text-align:center;font-size:11px;">Non signée</div>`}</div><div class="sn">${esc(doc.clientName||"")}</div></div>
@@ -359,7 +387,7 @@ function docHTML(doc) {
     ? (doc.validUntil?`<div class="om">Valable jusqu'au ${fD(doc.validUntil)}</div>`:"")
     : (doc.validUntil?`<div class="om">Échéance : ${fD(doc.validUntil)}</div>`:"");
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(doc.docNum||"")}</title>
-<style>*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#111;background:#fff;}.page{padding:12mm 15mm;max-width:210mm;margin:0 auto;}.hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #1d4ed8;padding-bottom:10px;margin-bottom:14px;}.bn{font-size:20px;font-weight:bold;color:#1d4ed8;}.bs{font-size:10px;color:#555;margin-top:2px;}.on{font-size:22px;font-weight:bold;color:#1d4ed8;text-align:right;}.om{font-size:10px;color:#555;text-align:right;margin-top:2px;}.sec{margin-bottom:10px;}.sh{background:#1d4ed8;color:#fff;padding:4px 10px;font-size:11px;font-weight:bold;margin-bottom:6px;}.grid{display:grid;gap:6px 10px;}.g2{grid-template-columns:1fr 1fr;}.vl{font-size:13px;font-weight:bold;}table{width:100%;border-collapse:collapse;font-size:11px;margin-top:4px;}th{background:#1d4ed8;color:#fff;text-align:left;padding:5px 8px;font-size:10px;}td{padding:5px 8px;border-bottom:1px solid #eee;}td.r,th.r{text-align:right;}.tot{margin-top:10px;margin-left:auto;width:55%;}.tot div{display:flex;justify-content:space-between;padding:3px 8px;font-size:12px;}.tot .ttc{background:#1d4ed8;color:#fff;font-weight:bold;font-size:13px;border-radius:4px;}.tb{border:1px solid #ddd;padding:6px 8px;min-height:40px;font-size:11px;white-space:pre-wrap;}.sr{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:16px;padding-top:12px;border-top:2px solid #1d4ed8;}.sl{font-size:10px;color:#333;font-weight:bold;margin-bottom:5px;}.sb{border:1px solid #999;height:82px;background:#fafafa;overflow:hidden;}.sn{font-size:9px;color:#888;text-align:center;margin-top:3px;}.foot{margin-top:14px;padding-top:8px;border-top:1px solid #ddd;font-size:9px;color:#aaa;text-align:center;}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}</style>
+<style>*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#111;background:#fff;}.page{padding:12mm 15mm;max-width:210mm;margin:0 auto;}.hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #1d4ed8;padding-bottom:10px;margin-bottom:14px;}.bn{font-size:20px;font-weight:bold;color:#1d4ed8;}.bs{font-size:10px;color:#555;margin-top:2px;}.on{font-size:22px;font-weight:bold;color:#1d4ed8;text-align:right;}.om{font-size:10px;color:#555;text-align:right;margin-top:2px;}.sec{margin-bottom:10px;}.sh{background:#1d4ed8;color:#fff;padding:4px 10px;font-size:11px;font-weight:bold;margin-bottom:6px;}.grid{display:grid;gap:6px 10px;}.g2{grid-template-columns:1fr 1fr;}.vl{font-size:13px;font-weight:bold;}table{width:100%;border-collapse:collapse;font-size:11px;margin-top:4px;}th{background:#1d4ed8;color:#fff;text-align:left;padding:5px 8px;font-size:10px;white-space:nowrap;}td{padding:5px 8px;border-bottom:1px solid #eee;}td.r,th.r{text-align:right;white-space:nowrap;}.tot{margin-top:10px;margin-left:auto;width:55%;}.tot div{display:flex;justify-content:space-between;padding:3px 8px;font-size:12px;}.tot .ttc{background:#1d4ed8;color:#fff;font-weight:bold;font-size:13px;border-radius:4px;}.tb{border:1px solid #ddd;padding:6px 8px;min-height:40px;font-size:11px;white-space:pre-wrap;}.sr{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:16px;padding-top:12px;border-top:2px solid #1d4ed8;}.sl{font-size:10px;color:#333;font-weight:bold;margin-bottom:5px;}.sb{border:1px solid #999;height:82px;background:#fafafa;overflow:hidden;}.sn{font-size:9px;color:#888;text-align:center;margin-top:3px;}.foot{margin-top:14px;padding-top:8px;border-top:1px solid #ddd;font-size:9px;color:#aaa;text-align:center;}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}</style>
 </head><body><div class="page">
 <div class="hdr"><div><div class="bn">Lycée Gallieni</div><div class="bs">Atelier BTS Maintenance des Véhicules</div><div class="bs" style="font-weight:bold;margin-top:5px;font-size:13px;">${isEst?"DEVIS / ESTIMATION":"FACTURE"}</div></div>
 <div><div class="on">${esc(doc.docNum||"")}</div><div class="om">Date : ${fD(doc.createdAt||today())}</div>${dateLine}<div class="om">Établi par : ${esc(doc.createdBy||"—")}</div></div></div>
@@ -1508,14 +1536,15 @@ function DocForm({ kind, initial, orders, documents, addDocument, editDocument, 
       items:(p.items&&p.items.length)?p.items:(o.tasks||[]).map(tk=>({label:tk.label,qty:1,unitPrice:0})),
     };
   });
-  const addLine=()=>sd(p=>({...p,items:[...p.items,{label:"",qty:1,unitPrice:0}]}));
+  const addLine=()=>sd(p=>({...p,items:[...p.items,{label:"",qty:1,unitPrice:0,unit:""}]}));
+  const addTarif=(t)=>sd(p=>({...p,items:[...p.items,{label:t.l,qty:1,unitPrice:t.p,unit:t.u}]}));
   const setLine=(i,k,v)=>sd(p=>({...p,items:p.items.map((it,j)=>j===i?{...it,[k]:v}:it)}));
   const delLine=(i)=>sd(p=>({...p,items:p.items.filter((_,j)=>j!==i)}));
   const t=docTotals(d);
   const save=async()=>{
     if(!d.clientName.trim()){notify("Le nom du client est obligatoire","error");return;}
     const clean={...d, tvaRate:Number(d.tvaRate)||0,
-      items:d.items.map(it=>({label:it.label||"",qty:Number(it.qty)||0,unitPrice:Number(it.unitPrice)||0}))};
+      items:d.items.map(it=>({label:it.label||"",qty:Number(it.qty)||0,unitPrice:Number(it.unitPrice)||0,unit:it.unit||""}))};
     sbusy(true);
     try{
       if(isNew){ const created=await addDocument({...clean,createdBy:user.name}); sd(created); notify(label+" créée : "+created.docNum); archiveDocToDrive(created,notify); }
@@ -1557,21 +1586,45 @@ function DocForm({ kind, initial, orders, documents, addDocument, editDocument, 
           <Inp label="Année" value={d.year} onChange={v=>set("year",v)}/>
           <Inp label="Km" value={d.km} onChange={v=>set("km",v)}/>
         </div>
+        <SecTitle>💶 Tarifs de l'atelier</SecTitle>
+        <p style={{color:C.mut,fontSize:12,margin:"0 0 10px"}}>Un clic ajoute la ligne au document ; il ne reste qu'à saisir la quantité (heures, grammes…). Les montants sont <b>hors taxes</b>.</p>
+        {TARIF_GROUPS.map(g=>(
+          <div key={g} style={{marginBottom:10}}>
+            <div style={{fontSize:11,color:C.mut,fontWeight:700,textTransform:"uppercase",letterSpacing:.4,marginBottom:6}}>{g}</div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+              {TARIFS.filter(t=>t.g===g).map(t=>(
+                <button key={t.s} type="button" onClick={()=>addTarif(t)} title={t.l}
+                  style={{flex:"1 1 200px",maxWidth:340,textAlign:"left",background:"#f8fafc",border:"1px solid "+C.bdr,borderRadius:8,padding:"8px 10px",cursor:"pointer",color:C.txt,fontFamily:"inherit"}}
+                  onMouseEnter={e=>{e.currentTarget.style.borderColor="#3b82f6";e.currentTarget.style.background="#eff6ff";}}
+                  onMouseLeave={e=>{e.currentTarget.style.borderColor=C.bdr;e.currentTarget.style.background="#f8fafc";}}>
+                  <span style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:8}}>
+                    <span style={{fontSize:13,fontWeight:600}}>{t.s}</span>
+                    <span style={{fontSize:13,fontWeight:700,color:t.p===0?"#15803d":"#1d4ed8",whiteSpace:"nowrap"}}>{t.p===0?"Gratuit":eur(t.p)+" / "+t.u}</span>
+                  </span>
+                  {t.h&&<span style={{display:"block",fontSize:11,color:C.mut,marginTop:2}}>{t.h}</span>}
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
         <SecTitle>📋 Lignes (prestations / pièces)</SecTitle>
-        <div style={{display:"flex",flexDirection:"column",gap:6}}>
+        <div style={{overflowX:"auto"}}>
+         <div style={{minWidth:540,display:"flex",flexDirection:"column",gap:6}}>
           <div style={{display:"flex",gap:8,fontSize:11,color:C.mut,fontWeight:600,padding:"0 4px"}}>
-            <span style={{flex:1}}>Désignation</span><span style={{width:60,textAlign:"right"}}>Qté</span><span style={{width:90,textAlign:"right"}}>PU HT</span><span style={{width:90,textAlign:"right"}}>Total</span><span style={{width:24}}/>
+            <span style={{flex:1}}>Désignation</span><span style={{width:62,textAlign:"right"}}>Qté</span><span style={{width:52}}>Unité</span><span style={{width:88,textAlign:"right"}}>PU HT</span><span style={{width:92,textAlign:"right"}}>Total</span><span style={{width:24}}/>
           </div>
           {d.items.map((it,i)=>{const lt=(Number(it.qty)||0)*(Number(it.unitPrice)||0);return(
             <div key={i} style={{display:"flex",gap:8,alignItems:"center"}}>
               <input value={it.label} onChange={e=>setLine(i,"label",e.target.value)} placeholder="Vidange, plaquettes..." style={{flex:1,background:"#f1f5f9",border:"1px solid "+C.bdr,borderRadius:6,padding:"7px 9px",color:C.txt,fontSize:13,outline:"none"}}/>
-              <input type="number" value={it.qty} onChange={e=>setLine(i,"qty",e.target.value)} style={{width:60,background:"#f1f5f9",border:"1px solid "+C.bdr,borderRadius:6,padding:"7px 6px",color:C.txt,fontSize:13,outline:"none",textAlign:"right"}}/>
-              <input type="number" value={it.unitPrice} onChange={e=>setLine(i,"unitPrice",e.target.value)} style={{width:90,background:"#f1f5f9",border:"1px solid "+C.bdr,borderRadius:6,padding:"7px 6px",color:C.txt,fontSize:13,outline:"none",textAlign:"right"}}/>
-              <span style={{width:90,textAlign:"right",fontSize:13,fontWeight:600,color:C.txt}}>{eur(lt)}</span>
+              <input type="number" step="any" value={it.qty} onChange={e=>setLine(i,"qty",e.target.value)} style={{width:62,background:"#f1f5f9",border:"1px solid "+C.bdr,borderRadius:6,padding:"7px 6px",color:C.txt,fontSize:13,outline:"none",textAlign:"right"}}/>
+              <input value={it.unit||""} onChange={e=>setLine(i,"unit",e.target.value)} placeholder="h, g…" style={{width:52,background:"#f1f5f9",border:"1px solid "+C.bdr,borderRadius:6,padding:"7px 6px",color:C.sub,fontSize:12,outline:"none"}}/>
+              <input type="number" step="any" value={it.unitPrice} onChange={e=>setLine(i,"unitPrice",e.target.value)} style={{width:88,background:"#f1f5f9",border:"1px solid "+C.bdr,borderRadius:6,padding:"7px 6px",color:C.txt,fontSize:13,outline:"none",textAlign:"right"}}/>
+              <span style={{width:92,textAlign:"right",fontSize:13,fontWeight:600,color:C.txt}}>{eur(lt)}</span>
               <button onClick={()=>delLine(i)} style={{width:24,background:"none",border:"none",color:C.mut,cursor:"pointer",fontSize:18}}>×</button>
             </div>
           );})}
-          <div><Btn sm ghost onClick={addLine}>+ Ajouter une ligne</Btn></div>
+          <div><Btn sm ghost onClick={addLine}>+ Ajouter une ligne libre</Btn></div>
+         </div>
         </div>
         <div style={{display:"flex",justifyContent:"flex-end",marginTop:14}}>
           <div style={{width:280,display:"flex",flexDirection:"column",gap:6}}>

@@ -122,6 +122,44 @@ export async function deleteDocument(id) {
   if (error) throw error;
 }
 
+// ── Historique d'entretien des véhicules ────────────────────────────────────
+// Lecture : tous ; écriture : enseignants et administrateurs (RLS).
+export function rowToVh(r) {
+  return {
+    id: r.id, plate: r.plate || "", brand: r.brand || "", model: r.model || "",
+    date: r.date || "", km: r.km || "", kind: r.kind || "entretien",
+    label: r.label || "", details: r.details || "",
+    createdBy: r.created_by || "", createdAt: r.created_at,
+  };
+}
+function vhToRow(v) {
+  const row = {};
+  for (const k of ["plate", "brand", "model", "km", "kind", "label", "details", "createdBy"])
+    if (k in v) row[camelToSnake(k)] = v[k];
+  if ("date" in v) row.date = v.date || null;
+  return row;
+}
+export async function listVehicleHistory() {
+  const { data, error } = await supabase
+    .from("vehicle_history").select("*").order("date", { ascending: false, nullsFirst: false });
+  if (error) throw error;
+  return data.map(rowToVh);
+}
+export async function insertVehicleHistory(v) {
+  const { data, error } = await supabase.from("vehicle_history").insert(vhToRow(v)).select().single();
+  if (error) throw error;
+  return rowToVh(data);
+}
+export async function updateVehicleHistory(id, patch) {
+  const { data, error } = await supabase.from("vehicle_history").update(vhToRow(patch)).eq("id", id).select().single();
+  if (error) throw error;
+  return rowToVh(data);
+}
+export async function deleteVehicleHistory(id) {
+  const { error } = await supabase.from("vehicle_history").delete().eq("id", id);
+  if (error) throw error;
+}
+
 // ── Tarifs de l'atelier (lecture : tout le monde ; écriture : admin via RLS) ─
 export function rowToTariff(r) {
   return {

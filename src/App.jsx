@@ -8,6 +8,7 @@ import {
   listDocuments, insertDocument, updateDocument, deleteDocument,
   countInspectionsBy,
   listTariffs, insertTariff, updateTariff, deleteTariff,
+  listVehicleHistory, insertVehicleHistory, updateVehicleHistory, deleteVehicleHistory,
 } from "./data";
 
 // Montants / TVA
@@ -28,6 +29,59 @@ function docTotals(doc) {
 }
 const isTTC = (doc) => doc?.priceMode === "ttc";
 const DOC_LABEL = { estimate: "Estimation", invoice: "Facture" };
+
+// Historique d'entretien : une plaque = une clé, quelle que soit sa ponctuation
+// (« AB-123-CD », « ab 123 cd » et « AB123CD » désignent le même véhicule).
+const plateKey = (p) => String(p ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+// Affichage canonique : « ab 123 cd » → « AB-123-CD ». Les plaques d'un autre
+// format (anciennes, étrangères) sont simplement mises en majuscules.
+const plateFmt = (p) => {
+  const k = plateKey(p);
+  const m = /^([A-Z]{2})(\d{3})([A-Z]{2})$/.exec(k);
+  return m ? m[1] + "-" + m[2] + "-" + m[3] : String(p ?? "").toUpperCase().trim();
+};
+const VH_KINDS = [
+  { v:"entretien",  l:"Entretien périodique", ico:"🛠", col:"#1d4ed8", bg:"#dbeafe" },
+  { v:"reparation", l:"Réparation",           ico:"🔧", col:"#b45309", bg:"#fef3c7" },
+  { v:"controle",   l:"Contrôle technique",   ico:"✅", col:"#15803d", bg:"#dcfce7" },
+  { v:"diagnostic", l:"Diagnostic",           ico:"🔎", col:"#7c3aed", bg:"#ede9fe" },
+  { v:"pneus",      l:"Pneumatiques",         ico:"🛞", col:"#0f766e", bg:"#ccfbf1" },
+  { v:"autre",      l:"Autre",                ico:"📌", col:"#475569", bg:"#f1f5f9" },
+];
+const vhKind = (v) => VH_KINDS.find(k => k.v === v) || VH_KINDS[VH_KINDS.length - 1];
+// « 95000 » → « 95 000 » ; une valeur non numérique est laissée telle quelle.
+const kmTxt = (k) => {
+  const n = Number(String(k ?? "").replace(/\s/g, ""));
+  return (k && Number.isFinite(n) && n > 0) ? n.toLocaleString("fr-FR") : String(k ?? "");
+};
+
+// Fiche de chaque véhicule connu de l'atelier, reconstituée depuis les ordres,
+// les documents et les interventions saisies à la main. Les informations les
+// plus récentes l'emportent.
+function buildVehicles(orders, documents, history) {
+  const rows = [];
+  (orders || []).forEach(o => rows.push({ plate:o.plate, date:o.exitDate||o.entryDate||o.createdAt||"",
+    brand:o.brand, model:o.model, year:o.year, km:o.km,
+    client:o.vtype === "peda" ? "Véhicule pédagogique" : (o.clientName || ""), src:"or" }));
+  (documents || []).forEach(d => rows.push({ plate:d.plate, date:(d.createdAt||"").slice(0,10),
+    brand:d.brand, model:d.model, year:d.year, km:d.km, client:d.clientName || "", src:"doc" }));
+  (history || []).forEach(h => rows.push({ plate:h.plate, date:h.date||(h.createdAt||"").slice(0,10),
+    brand:h.brand, model:h.model, year:"", km:h.km, client:"", src:"vh" }));
+  const map = new Map();
+  rows.filter(r => plateKey(r.plate))
+      .sort((a, b) => String(a.date).localeCompare(String(b.date)))   // du plus ancien au plus récent
+      .forEach(r => {
+        const k = plateKey(r.plate);
+        const v = map.get(k) || { key:k, plate:r.plate, brand:"", model:"", year:"", km:"", client:"",
+                                  last:"", nOrders:0, nDocs:0, nNotes:0 };
+        if (r.plate) v.plate = plateFmt(r.plate);
+        for (const f of ["brand", "model", "year", "km", "client"]) if (r[f]) v[f] = r[f];
+        if (String(r.date) > String(v.last)) v.last = r.date;
+        if (r.src === "or") v.nOrders++; else if (r.src === "doc") v.nDocs++; else v.nNotes++;
+        map.set(k, v);
+      });
+  return [...map.values()].sort((a, b) => String(b.last).localeCompare(String(a.last)));
+}
 
 // Groupes de tarifs présents dans le catalogue, dans l'ordre d'affichage.
 const tarifGroups = (list) => (list||[]).reduce((a,t) => a.includes(t.group) ? a : [...a, t.group], []);
@@ -169,6 +223,13 @@ function useStudents(dep) {
 function useTariffs(dep) {
   const { items, reload } = useCollection(listTariffs, "tariffs", dep);
   return { tariffs: items, reloadTariffs: reload };
+}
+function useVehicleHistory(dep) {
+  const { items, reload } = useCollection(listVehicleHistory, "vehicle_history", dep);
+  const addVh    = useCallback(async (v) => { const r = await insertVehicleHistory(v); reload(); return r; }, [reload]);
+  const editVh   = useCallback(async (id, patch) => { const r = await updateVehicleHistory(id, patch); reload(); return r; }, [reload]);
+  const removeVh = useCallback(async (id) => { await deleteVehicleHistory(id); reload(); }, [reload]);
+  return { vehicleHistory: items, addVh, editVh, removeVh };
 }
 function useDocuments(dep) {
   const { items, loading, reload } = useCollection(listDocuments, "documents", dep);
@@ -583,6 +644,7 @@ function ResetPasswordView({ notify, onDone }) {
 const NAV = [
   { id:"dashboard", ico:"📊", lbl:"Tableau de bord" },
   { id:"orders",    ico:"🔧", lbl:"Ordres de réparation" },
+  { id:"vehicles",  ico:"🚙", lbl:"Historique véhicules" },
   { id:"estimates", ico:"🧾", lbl:"Estimations" },
   { id:"invoices",  ico:"💶", lbl:"Factures" },
   { id:"history",   ico:"📋", lbl:"Historique" },
@@ -608,7 +670,7 @@ function Sidebar({ user, page, nav, logout }) {
       </nav>
       <div style={{ padding:"12px 8px", borderTop:"1px solid "+C.bdr }}>
         <button onClick={logout} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px", borderRadius:8, border:"none", cursor:"pointer", width:"100%", background:"transparent", color:C.sub, fontSize:14 }}>
-          🚪 Deconnexion
+          🚪 Déconnexion
         </button>
       </div>
     </div>
@@ -978,6 +1040,215 @@ function NewOrderForm({ addOrder, teachers, students, user, nav, selOrd, notify 
           <Btn onClick={submit} disabled={busy}>{busy?"Création…":(isEv?"⚡ Créer l'OR véhicule électrique / hybride":"✅ Créer l'ordre de réparation")}</Btn>
         </div>
       </Crd>
+    </div>
+  );
+}
+
+
+// ── Historique d'entretien des véhicules ───────────────────────────────────
+// Recherche ouverte à tous ; saisie réservée aux enseignants et administrateurs.
+
+function VhModal({ init, plate, user, onSave, onClose }) {
+  const [f,sf]=useState(()=> init
+    ? {...init}
+    : { plate:plate||"", brand:"", model:"", date:today(), km:"", kind:"entretien", label:"", details:"" });
+  const [busy,sbusy]=useState(false);
+  const set=(k,v)=>sf(p=>({...p,[k]:v}));
+  const ok=async()=>{
+    if(!plateKey(f.plate)){alert("L'immatriculation est obligatoire.");return;}
+    if(!f.label.trim()){alert("Indiquez la nature de l'intervention.");return;}
+    sbusy(true);
+    try{ await onSave({...f, plate:f.plate.toUpperCase().trim(), label:f.label.trim(), createdBy:init?init.createdBy:user.name}); }
+    finally{ sbusy(false); }
+  };
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.75)",zIndex:50,display:"flex",alignItems:"center",justifyContent:"center",padding:16,overflowY:"auto"}}>
+      <div style={{background:C.card,borderRadius:16,padding:24,width:"100%",maxWidth:560,border:"1px solid "+C.bdr,maxHeight:"92vh",overflowY:"auto"}}>
+        <h3 style={{color:C.txt,fontSize:18,fontWeight:700,marginBottom:4}}>{init?"✏️ Modifier l'intervention":"➕ Ajouter une intervention"}</h3>
+        <p style={{color:C.sub,fontSize:13,marginBottom:16}}>Pour consigner ce qui n'est pas passé par l'atelier : entretien antérieur, intervention extérieure, contrôle technique…</p>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:12,marginBottom:12}}>
+          <Inp label="Immatriculation *" value={f.plate} onChange={v=>set("plate",v.toUpperCase())} placeholder="AB-123-CD"/>
+          <Inp label="Date" value={f.date} onChange={v=>set("date",v)} type="date"/>
+          <Inp label="Kilométrage" value={f.km} onChange={v=>set("km",v)} placeholder="92000"/>
+          <Sel label="Nature" value={f.kind} onChange={v=>set("kind",v)} opts={VH_KINDS.map(k=>({v:k.v,l:k.ico+" "+k.l}))}/>
+          <Inp label="Marque" value={f.brand} onChange={v=>set("brand",v)} placeholder="Peugeot"/>
+          <Inp label="Modèle" value={f.model} onChange={v=>set("model",v)} placeholder="308 SW"/>
+        </div>
+        <div style={{marginBottom:12}}>
+          <Inp label="Intervention *" value={f.label} onChange={v=>set("label",v)} placeholder="Vidange + filtre à huile"/>
+        </div>
+        <div style={{marginBottom:20}}>
+          <TA label="Détails" value={f.details} onChange={v=>set("details",v)} placeholder="Pièces posées, atelier, remarques…" rows={3}/>
+        </div>
+        <div style={{display:"flex",justifyContent:"flex-end",gap:10}}>
+          <Btn ghost onClick={onClose}>Annuler</Btn>
+          <Btn onClick={ok} disabled={busy}>{busy?"Enregistrement…":"✅ Enregistrer"}</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function VehiclesView({ orders, documents, vehicleHistory, user, nav, selOrd, openDoc, addVh, editVh, removeVh, notify }) {
+  const [q,sq]=useState(""); const [sel,ssel]=useState(null); const [modal,smodal]=useState(null);
+  const isStaff=user.role!=="eleve";
+  const vehicles=buildVehicles(orders,documents,vehicleHistory);
+  const needle=q.trim().toLowerCase(), nKey=plateKey(q);
+  const shown=!needle?vehicles:vehicles.filter(v=>
+    (nKey&&v.key.includes(nKey))||[v.plate,v.brand,v.model,v.client].join(" ").toLowerCase().includes(needle));
+  const v=sel?vehicles.find(x=>x.key===sel):null;
+
+  const save=async(data)=>{
+    try{
+      if(modal&&modal.edit){ await editVh(modal.edit.id,data); notify("Intervention modifiée"); }
+      else { await addVh(data); notify("Intervention ajoutée à l'historique"); }
+      smodal(null);
+      if(!sel) ssel(plateKey(data.plate));
+    }catch(e){ console.error(e); notify("Erreur : "+(e.message||e),"error"); }
+  };
+  const del=async(h)=>{
+    if(!window.confirm("Supprimer « "+h.label+" » de l'historique ?"))return;
+    try{ await removeVh(h.id); notify("Intervention supprimée"); }
+    catch(e){ console.error(e); notify("Erreur : "+(e.message||e),"error"); }
+  };
+
+  // ── Fiche d'un véhicule ──
+  if(v){
+    const k=v.key;
+    const items=[
+      ...orders.filter(o=>plateKey(o.plate)===k).map(o=>({t:"or",id:o.id,date:o.entryDate||(o.createdAt||"").slice(0,10),o})),
+      ...documents.filter(d=>plateKey(d.plate)===k).map(d=>({t:d.kind,id:d.id,date:(d.createdAt||"").slice(0,10),d})),
+      ...vehicleHistory.filter(h=>plateKey(h.plate)===k).map(h=>({t:"vh",id:h.id,date:h.date||(h.createdAt||"").slice(0,10),h})),
+    ].sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+    return (
+      <div style={{maxWidth:900,margin:"0 auto"}}>
+        <Btn ghost sm onClick={()=>ssel(null)} style={{marginBottom:12}}>← Tous les véhicules</Btn>
+        <Crd style={{marginBottom:14}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12,flexWrap:"wrap"}}>
+            <div>
+              <h2 style={{color:C.txt,fontSize:22,fontWeight:700,margin:0,letterSpacing:.5}}>🚙 {v.plate}</h2>
+              <div style={{color:C.sub,fontSize:14,marginTop:4}}>{[v.brand,v.model,v.year&&"("+v.year+")"].filter(Boolean).join(" ")||"Véhicule non identifié"}</div>
+              {v.client&&<div style={{color:C.mut,fontSize:12,marginTop:2}}>{v.client}</div>}
+            </div>
+            {isStaff&&<Btn sm onClick={()=>smodal({plate:v.plate})}>➕ Ajouter une intervention</Btn>}
+          </div>
+          <div style={{display:"flex",gap:16,flexWrap:"wrap",marginTop:12,paddingTop:12,borderTop:"1px solid "+C.bdr,fontSize:13}}>
+            <span style={{color:C.sub}}>Dernier passage : <b style={{color:C.txt}}>{v.last?fD(v.last):"—"}</b></span>
+            {v.km&&<span style={{color:C.sub}}>Dernier kilométrage connu : <b style={{color:C.txt}}>{kmTxt(v.km)} km</b></span>}
+            <span style={{color:C.mut}}>{v.nOrders} OR · {v.nDocs} document(s) · {v.nNotes} saisie(s)</span>
+          </div>
+        </Crd>
+        {items.length===0
+          ? <Crd><p style={{color:C.mut,fontSize:13,margin:0}}>Aucune intervention enregistrée pour ce véhicule.</p></Crd>
+          : <div style={{display:"flex",flexDirection:"column",gap:10}}>
+              {items.map(it=>{
+                if(it.t==="or"){ const o=it.o, dn=(o.tasks||[]).filter(t=>t.done).length, tot=(o.tasks||[]).length;
+                  return (
+                    <Crd key={"or"+it.id} style={{borderLeft:"4px solid #3b82f6"}}>
+                      <div style={{display:"flex",justifyContent:"space-between",gap:10,flexWrap:"wrap",alignItems:"center"}}>
+                        <div>
+                          <span style={{fontSize:11,fontWeight:700,padding:"2px 8px",borderRadius:999,background:"#dbeafe",color:"#1d4ed8"}}>🔧 Ordre de réparation</span>
+                          <span style={{color:C.mut,fontSize:12,marginLeft:8}}>{fD(it.date)}</span>
+                          {o.ev&&<span style={{fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:999,background:"#fef9c3",color:"#a16207",marginLeft:6}}>⚡ VE/VH</span>}
+                        </div>
+                        <Btn sm ghost onClick={()=>{selOrd(o.id);nav("order-detail");}}>Ouvrir</Btn>
+                      </div>
+                      <div style={{color:C.txt,fontSize:14,fontWeight:600,marginTop:8}}>{o.orderNum}</div>
+                      {o.reason&&<div style={{color:C.sub,fontSize:13,marginTop:2}}>{o.reason}</div>}
+                      <div style={{color:C.mut,fontSize:12,marginTop:6}}>
+                        <Badge status={o.status}/> <span style={{marginLeft:8}}>{dn}/{tot} travaux réalisés</span>
+                        {o.km&&<span style={{marginLeft:8}}>· {kmTxt(o.km)} km</span>}
+                      </div>
+                    </Crd>
+                  );
+                }
+                if(it.t==="estimate"||it.t==="invoice"){ const d=it.d, est=it.t==="estimate";
+                  return (
+                    <Crd key={"d"+it.id} style={{borderLeft:"4px solid "+(est?"#a78bfa":"#059669")}}>
+                      <div style={{display:"flex",justifyContent:"space-between",gap:10,flexWrap:"wrap",alignItems:"center"}}>
+                        <div>
+                          <span style={{fontSize:11,fontWeight:700,padding:"2px 8px",borderRadius:999,background:est?"#ede9fe":"#dcfce7",color:est?"#6d28d9":"#15803d"}}>{est?"🧾 Estimation":"💶 Facture"}</span>
+                          <span style={{color:C.mut,fontSize:12,marginLeft:8}}>{fD(it.date)}</span>
+                        </div>
+                        <Btn sm ghost onClick={()=>openDoc(d.id,d.kind)}>Ouvrir</Btn>
+                      </div>
+                      <div style={{color:C.txt,fontSize:14,fontWeight:600,marginTop:8}}>{d.docNum} · {eur(docTotals(d).ttc)}</div>
+                      <div style={{color:C.mut,fontSize:12,marginTop:2}}>{(d.items||[]).length} ligne(s) · {d.createdBy}</div>
+                    </Crd>
+                  );
+                }
+                const h=it.h, kd=vhKind(h.kind);
+                return (
+                  <Crd key={"h"+it.id} style={{borderLeft:"4px solid "+kd.col}}>
+                    <div style={{display:"flex",justifyContent:"space-between",gap:10,flexWrap:"wrap",alignItems:"center"}}>
+                      <div>
+                        <span style={{fontSize:11,fontWeight:700,padding:"2px 8px",borderRadius:999,background:kd.bg,color:kd.col}}>{kd.ico} {kd.l}</span>
+                        <span style={{color:C.mut,fontSize:12,marginLeft:8}}>{fD(it.date)}</span>
+                      </div>
+                      {isStaff&&(
+                        <div style={{display:"flex",gap:6}}>
+                          <Btn sm ghost onClick={()=>smodal({edit:h})}>✏️ Modifier</Btn>
+                          <Btn sm ghost danger onClick={()=>del(h)}>🗑</Btn>
+                        </div>
+                      )}
+                    </div>
+                    <div style={{color:C.txt,fontSize:14,fontWeight:600,marginTop:8}}>{h.label}</div>
+                    {h.details&&<div style={{color:C.sub,fontSize:13,marginTop:2,whiteSpace:"pre-wrap"}}>{h.details}</div>}
+                    <div style={{color:C.mut,fontSize:12,marginTop:6}}>{h.km?kmTxt(h.km)+" km · ":""}saisi par {h.createdBy||"—"}</div>
+                  </Crd>
+                );
+              })}
+            </div>}
+        {modal&&<VhModal init={modal.edit} plate={modal.plate} user={user} onSave={save} onClose={()=>smodal(null)}/>}
+      </div>
+    );
+  }
+
+  // ── Liste / recherche ──
+  return (
+    <div style={{maxWidth:900,margin:"0 auto"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexWrap:"wrap",gap:12}}>
+        <h2 style={{color:C.txt,fontSize:20,fontWeight:700,margin:0}}>🚙 Historique d'entretien des véhicules</h2>
+        {isStaff&&<Btn sm onClick={()=>smodal({plate:q.trim().toUpperCase()})}>➕ Ajouter une intervention</Btn>}
+      </div>
+      <Crd style={{marginBottom:14}}>
+        <input value={q} onChange={e=>sq(e.target.value)} placeholder="Rechercher une immatriculation, une marque, un modèle, un client…"
+          style={{width:"100%",background:"#f1f5f9",border:"1px solid "+C.bdr,borderRadius:8,padding:"11px 14px",color:C.txt,fontSize:15,outline:"none",fontFamily:"inherit"}}/>
+        <p style={{color:C.mut,fontSize:12,margin:"8px 0 0"}}>
+          {vehicles.length} véhicule(s) connu(s) de l'atelier. La ponctuation de la plaque n'a pas d'importance : « ab123cd » trouve « AB-123-CD ».
+        </p>
+      </Crd>
+      {shown.length===0?(
+        <Crd>
+          <p style={{color:C.mut,fontSize:13,margin:0}}>
+            {vehicles.length===0?"Aucun véhicule enregistré pour le moment.":"Aucun véhicule ne correspond à cette recherche."}
+          </p>
+          {isStaff&&plateKey(q)&&(
+            <div style={{marginTop:12}}>
+              <Btn sm onClick={()=>smodal({plate:q.trim().toUpperCase()})}>➕ Créer l'historique de « {q.trim().toUpperCase()} »</Btn>
+            </div>
+          )}
+        </Crd>
+      ):(
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))",gap:12}}>
+          {shown.map(x=>(
+            <div key={x.key} onClick={()=>ssel(x.key)} style={{background:C.card,borderRadius:12,padding:16,border:"1px solid "+C.bdr,cursor:"pointer"}}
+              onMouseEnter={e=>e.currentTarget.style.borderColor="#3b82f6"}
+              onMouseLeave={e=>e.currentTarget.style.borderColor=C.bdr}>
+              <div style={{color:C.txt,fontWeight:700,fontSize:17,letterSpacing:.5}}>{x.plate}</div>
+              <div style={{color:C.sub,fontSize:13,marginTop:2}}>{[x.brand,x.model].filter(Boolean).join(" ")||"—"}{x.year?" ("+x.year+")":""}</div>
+              {x.client&&<div style={{color:C.mut,fontSize:12,marginTop:2}}>{x.client}</div>}
+              <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:10}}>
+                {x.nOrders>0&&<span style={{fontSize:11,padding:"2px 8px",borderRadius:999,background:"#dbeafe",color:"#1d4ed8"}}>{x.nOrders} OR</span>}
+                {x.nDocs>0&&<span style={{fontSize:11,padding:"2px 8px",borderRadius:999,background:"#dcfce7",color:"#15803d"}}>{x.nDocs} doc.</span>}
+                {x.nNotes>0&&<span style={{fontSize:11,padding:"2px 8px",borderRadius:999,background:"#fef3c7",color:"#b45309"}}>{x.nNotes} saisie(s)</span>}
+              </div>
+              <div style={{color:C.mut,fontSize:11,marginTop:10}}>Dernier passage : {x.last?fD(x.last):"—"}</div>
+            </div>
+          ))}
+        </div>
+      )}
+      {modal&&<VhModal init={modal.edit} plate={modal.plate} user={user} onSave={save} onClose={()=>smodal(null)}/>}
     </div>
   );
 }
@@ -1850,6 +2121,7 @@ export default function DMSApp() {
   const { students, reloadStudents } = useStudents(cu?.id);
   const { documents, addDocument, editDocument, removeDocument } = useDocuments(cu?.id);
   const { tariffs, reloadTariffs } = useTariffs(cu?.id);
+  const { vehicleHistory, addVh, editVh, removeVh } = useVehicleHistory(cu?.id);
   const [staff,setStaff]=useState([]);
   const [page,sp]=useState("dashboard");
   const [selId,ssi]=useState(null); const [sideOpen,sso]=useState(false);
@@ -1871,6 +2143,7 @@ export default function DMSApp() {
   const renderPage=()=>{
     if(page==="dashboard")    return<Dashboard orders={orders} nav={nav} selOrd={ssi}/>;
     if(page==="orders")       return<OrdersList orders={orders} nav={nav} selOrd={ssi}/>;
+    if(page==="vehicles")     return <VehiclesView orders={orders} documents={documents} vehicleHistory={vehicleHistory} user={cu} nav={nav} selOrd={ssi} openDoc={openDoc} addVh={addVh} editVh={editVh} removeVh={removeVh} notify={notify}/>;
     if(page==="new-order")    return <NewOrderForm addOrder={addOrder} teachers={staff} students={students} user={cu} nav={nav} selOrd={ssi} notify={notify}/>;
     if(page==="order-detail") return selId?<OrderDetail orderId={selId} orders={orders} editOrder={editOrder} removeOrder={removeOrder} isAdmin={isAdmin} user={cu} nav={nav} notify={notify} students={students}/>:null;
     if(page==="estimates")    return <DocsList kind="estimate" documents={documents} openDoc={openDoc} newDoc={()=>newDoc("estimate")}/>;

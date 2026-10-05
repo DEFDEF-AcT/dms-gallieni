@@ -288,6 +288,7 @@ alter publication supabase_realtime add table documents;
 -- ----------------------------------------------------------------------------
 -- MIGRATION (bases déjà en service) : traçabilité VE/VH
 --   alter table orders add column if not exists ev jsonb;
+-- MIGRATION : créer la table vehicle_history ci-dessous.
 -- MIGRATION : créer la table tariffs ci-dessous (avec son jeu de départ).
 -- MIGRATION : alter table documents add column if not exists price_mode text
 --   not null default 'ht' check (price_mode in ('ht','ttc'));
@@ -345,6 +346,46 @@ select * from (values
   ('Frais annexes','Gestion des déchets industriels','Participation aux frais de gestion des déchets industriels','Ligne facultative : à ajouter selon l''intervention',5,'forfait',1)
 ) as v(grp, short, label, hint, price, unit, pos)
 where not exists (select 1 from tariffs);
+
+-- ============================================================================
+-- HISTORIQUE D'ENTRETIEN DES VÉHICULES (identifié par la plaque)
+-- Complète l'historique automatique (ordres, estimations, factures) : on y
+-- saisit ce qui n'est pas passé par l'atelier — entretien antérieur,
+-- intervention extérieure, contrôle technique…
+-- Lecture : tout utilisateur connecté. Écriture : enseignants et administrateurs.
+-- ============================================================================
+create table if not exists vehicle_history (
+  id         uuid primary key default gen_random_uuid(),
+  plate      text not null,
+  brand      text default '',                 -- secours si le véhicule n'a aucun OR
+  model      text default '',
+  date       date,
+  km         text default '',
+  kind       text not null default 'entretien',  -- entretien|reparation|controle|diagnostic|pneus|autre
+  label      text not null default '',
+  details    text default '',
+  created_by text default '',
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create index if not exists vehicle_history_plate_idx on vehicle_history (upper(plate));
+
+drop trigger if exists trg_vehicle_history_touch on vehicle_history;
+create trigger trg_vehicle_history_touch before update on vehicle_history
+  for each row execute function touch_updated_at();
+
+alter table vehicle_history enable row level security;
+drop policy if exists read_vehicle_history on vehicle_history;
+drop policy if exists ins_vehicle_history  on vehicle_history;
+drop policy if exists upd_vehicle_history  on vehicle_history;
+drop policy if exists del_vehicle_history  on vehicle_history;
+create policy read_vehicle_history on vehicle_history for select using (auth.role() = 'authenticated');
+create policy ins_vehicle_history  on vehicle_history for insert with check (is_staff());
+create policy upd_vehicle_history  on vehicle_history for update using (is_staff());
+create policy del_vehicle_history  on vehicle_history for delete using (is_staff());
+
+alter publication supabase_realtime add table vehicle_history;
 
 -- ============================================================================
 -- APRÈS EXÉCUTION :

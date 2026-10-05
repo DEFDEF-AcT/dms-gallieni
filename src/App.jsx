@@ -643,11 +643,11 @@ function ResetPasswordView({ notify, onDone }) {
 
 const NAV = [
   { id:"dashboard", ico:"📊", lbl:"Tableau de bord" },
+  { id:"history",   ico:"📋", lbl:"Suivis Atelier" },
   { id:"orders",    ico:"🔧", lbl:"Ordres de réparation" },
   { id:"vehicles",  ico:"🚙", lbl:"Historique véhicules" },
   { id:"estimates", ico:"🧾", lbl:"Estimations" },
   { id:"invoices",  ico:"💶", lbl:"Factures" },
-  { id:"history",   ico:"📋", lbl:"Historique" },
   { id:"admin",     ico:"⚙️", lbl:"Administration", staff:true },
   { id:"account",   ico:"👤", lbl:"Mon compte", staff:true },
 ];
@@ -1503,7 +1503,7 @@ function HistoryView({ orders, documents, nav, selOrd, openDoc }) {
   return (
     <div style={{display:"flex",flexDirection:"column",gap:16}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
-        <h2 style={{color:C.txt,fontSize:20,fontWeight:700,margin:0}}>📋 Historique</h2>
+        <h2 style={{color:C.txt,fontSize:20,fontWeight:700,margin:0}}>📋 Suivis Atelier</h2>
         {tab==="orders"&&<Btn sm onClick={()=>csvExport(toCSV(orders),"DMS_Gallieni_"+today()+".csv")} style={{background:"#065f46"}}>⬇ Exporter CSV/Excel</Btn>}
       </div>
       <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>

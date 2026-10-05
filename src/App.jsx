@@ -40,6 +40,20 @@ const plateFmt = (p) => {
   const m = /^([A-Z]{2})(\d{3})([A-Z]{2})$/.exec(k);
   return m ? m[1] + "-" + m[2] + "-" + m[3] : String(p ?? "").toUpperCase().trim();
 };
+// À quel suivi appartient un devis / une facture ? L'ordre de réparation lié
+// fait foi ; à défaut on cherche un OR portant la même plaque ; sinon « client ».
+const docVtype = (d, orders) => {
+  const lie = d.orderId && (orders || []).find(o => o.id === d.orderId);
+  if (lie) return lie.vtype;
+  const k = plateKey(d.plate);
+  const parPlaque = k && (orders || []).find(o => plateKey(o.plate) === k);
+  return parPlaque ? parPlaque.vtype : "client";
+};
+const SCOPES = [
+  { v:"client", lbl:"Clients",               ico:"👤", sub:"Véhicules de clients",            col:"#1d4ed8", bg:"#dbeafe" },
+  { v:"peda",   lbl:"Véhicules pédagogiques", ico:"🎓", sub:"Véhicules de l'établissement",   col:"#c2410c", bg:"#ffedd5" },
+];
+
 const VH_KINDS = [
   { v:"entretien",  l:"Entretien périodique", ico:"🛠", col:"#1d4ed8", bg:"#dbeafe" },
   { v:"reparation", l:"Réparation",           ico:"🔧", col:"#b45309", bg:"#fef3c7" },
@@ -1492,28 +1506,56 @@ function ExitModal({ o, onOk, onClose }) {
 }
 
 function HistoryView({ orders, documents, nav, selOrd, openDoc }) {
+  const [scope,ssc]=useState("client");          // suivi « clients » ou « pédagogiques »
   const [tab,st]=useState("orders");
   const [q,sq]=useState("");
   const ql=q.toLowerCase();
   const TABS=[["orders","🔧 Ordres"],["estimate","🧾 Estimations"],["invoice","💶 Factures"]];
-  const ords=[...orders].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt))
-    .filter(o=>!q||[o.plate,o.brand,o.model,o.clientName,o.orderNum,o.students].join(" ").toLowerCase().includes(ql));
-  const docs=(documents||[]).filter(d=>d.kind===tab).sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt))
+  const sc=SCOPES.find(x=>x.v===scope)||SCOPES[0];
+  // tout est cloisonné par suivi : les ordres par leur type de véhicule,
+  // les documents par l'ordre (ou la plaque) auxquels ils se rattachent.
+  const ordsScope=orders.filter(o=>o.vtype===scope);
+  const docsScope=(documents||[]).filter(d=>docVtype(d,orders)===scope);
+  const ords=[...ordsScope].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt))
+    .filter(o=>!q||[o.plate,o.brand,o.model,o.clientName,o.teacher,o.orderNum,o.students].join(" ").toLowerCase().includes(ql));
+  const docs=docsScope.filter(d=>d.kind===tab).sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt))
     .filter(d=>!q||[d.docNum,d.clientName,d.plate,d.brand,d.model].join(" ").toLowerCase().includes(ql));
+  const nb=(v)=>({
+    orders:orders.filter(o=>o.vtype===v).length,
+    docs:(documents||[]).filter(d=>docVtype(d,orders)===v).length,
+  });
   return (
     <div style={{display:"flex",flexDirection:"column",gap:16}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
-        <h2 style={{color:C.txt,fontSize:20,fontWeight:700,margin:0}}>📋 Suivis Atelier</h2>
-        {tab==="orders"&&<Btn sm onClick={()=>csvExport(toCSV(orders),"DMS_Gallieni_"+today()+".csv")} style={{background:"#065f46"}}>⬇ Exporter CSV/Excel</Btn>}
+        <h2 style={{color:C.txt,fontSize:20,fontWeight:700,margin:0}}>📋 Suivi atelier – {sc.ico} {sc.lbl}</h2>
+        {tab==="orders"&&<Btn sm onClick={()=>csvExport(toCSV(ords),"DMS_Gallieni_"+scope+"_"+today()+".csv")} style={{background:"#065f46"}}>⬇ Exporter ({sc.lbl.toLowerCase()})</Btn>}
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))",gap:10}}>
+        {SCOPES.map(x=>{
+          const on=scope===x.v, n=nb(x.v);
+          return (
+            <button key={x.v} onClick={()=>ssc(x.v)} style={{textAlign:"left",padding:"12px 14px",borderRadius:10,cursor:"pointer",
+              border:"2px solid "+(on?x.col:C.bdr),background:on?x.bg:C.card,color:C.txt,fontFamily:"inherit"}}>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <span style={{fontSize:18}}>{x.ico}</span>
+                <span style={{fontSize:15,fontWeight:700,color:on?x.col:C.txt}}>{x.lbl}</span>
+              </div>
+              <div style={{fontSize:11,color:C.mut,marginTop:2}}>{x.sub}</div>
+              <div style={{fontSize:12,color:on?x.col:C.sub,marginTop:6,fontWeight:600}}>
+                {n.orders} ordre{n.orders>1?"s":""} · {n.docs} document{n.docs>1?"s":""}
+              </div>
+            </button>
+          );
+        })}
       </div>
       <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
         {TABS.map(([id,l])=><button key={id} onClick={()=>st(id)} style={{padding:"8px 16px",borderRadius:6,cursor:"pointer",fontSize:13,border:"1px solid "+(tab===id?"#2563eb":C.bdr),background:tab===id?C.acc:"transparent",color:tab===id?"#fff":C.sub}}>{l}</button>)}
       </div>
-      <input value={q} onChange={e=>sq(e.target.value)} placeholder="🔍 Rechercher..."
+      <input value={q} onChange={e=>sq(e.target.value)} placeholder={scope==="peda"?"🔍 Rechercher (plaque, modèle, enseignant, élève…)":"🔍 Rechercher (plaque, modèle, client…)"}
         style={{background:C.card,border:"1px solid "+C.bdr,borderRadius:8,padding:"10px 14px",color:C.txt,fontSize:13,outline:"none"}}/>
       {tab==="orders" ? (
         ords.length===0
-          ?<Crd><p style={{color:C.mut,textAlign:"center",margin:0}}>Aucune intervention enregistrée</p></Crd>
+          ?<Crd><p style={{color:C.mut,textAlign:"center",margin:0}}>Aucun ordre de réparation dans le suivi « {sc.lbl} »</p></Crd>
           :<div style={{display:"flex",flexDirection:"column",gap:8}}>
             {ords.map(o=>{const isPeda=o.vtype==="peda";return(
               <div key={o.id} onClick={()=>{selOrd(o.id);nav("order-detail");}}
@@ -1538,7 +1580,7 @@ function HistoryView({ orders, documents, nav, selOrd, openDoc }) {
           </div>
       ) : (
         docs.length===0
-          ?<Crd><p style={{color:C.mut,textAlign:"center",margin:0}}>Aucun document</p></Crd>
+          ?<Crd><p style={{color:C.mut,textAlign:"center",margin:0}}>Aucun document dans le suivi « {sc.lbl} »</p></Crd>
           :<div style={{display:"flex",flexDirection:"column",gap:8}}>
             {docs.map(d=>{const t=docTotals(d);return(
               <div key={d.id} onClick={()=>openDoc(d.id,d.kind)}
@@ -1549,7 +1591,7 @@ function HistoryView({ orders, documents, nav, selOrd, openDoc }) {
                     <span style={{color:"#1d4ed8",fontWeight:700,fontSize:12}}>{d.docNum}</span>
                     {d.kind==="estimate"&&(d.signature?<span style={{fontSize:11,color:"#059669"}}>✍ Signé</span>:<span style={{fontSize:11,color:"#c2410c"}}>Non signé</span>)}
                   </div>
-                  <div style={{color:C.txt,fontWeight:600}}>{d.clientName||"—"}</div>
+                  <div style={{color:C.txt,fontWeight:600}}>{d.clientName||(scope==="peda"?"Véhicule pédagogique":"—")}</div>
                   <div style={{color:C.sub,fontSize:12}}>{d.plate} {d.brand} {d.model}</div>
                 </div>
                 <div style={{textAlign:"right"}}>

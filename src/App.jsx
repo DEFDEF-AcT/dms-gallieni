@@ -645,9 +645,9 @@ const NAV = [
   { id:"dashboard", ico:"📊", lbl:"Tableau de bord" },
   { id:"history",   ico:"📋", lbl:"Suivis Atelier" },
   { id:"orders",    ico:"🔧", lbl:"Ordres de réparation" },
-  { id:"vehicles",  ico:"🚙", lbl:"Historique véhicules" },
   { id:"estimates", ico:"🧾", lbl:"Estimations" },
   { id:"invoices",  ico:"💶", lbl:"Factures" },
+  { id:"vehicles",  ico:"🚙", lbl:"Historique véhicules" },
   { id:"admin",     ico:"⚙️", lbl:"Administration", staff:true },
   { id:"account",   ico:"👤", lbl:"Mon compte", staff:true },
 ];

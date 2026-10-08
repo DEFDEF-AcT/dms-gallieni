@@ -439,10 +439,13 @@ function generatePDF(order) {
 function docHTML(doc) {
   const isEst = doc.kind === "estimate";
   const t = docTotals(doc);
+  // La colonne « Référence » n'apparaît que si au moins une ligne en porte une.
+  const hasRef = (doc.items||[]).some(it => String(it.ref||"").trim());
+  const nCols = hasRef ? 5 : 4;
   const rows = (doc.items||[]).map((it,i)=>{
     const lt=(Number(it.qty)||0)*(Number(it.unitPrice)||0);
-    return `<tr${i%2?' style="background:#f9f9f9"':''}><td>${esc(it.label||"")}</td><td class="r">${esc(qte(it.qty))}${it.unit?" "+esc(it.unit):""}</td><td class="r">${eur(it.unitPrice)}</td><td class="r">${eur(lt)}</td></tr>`;
-  }).join("") || `<tr><td colspan="4" style="color:#999">Aucune ligne</td></tr>`;
+    return `<tr${i%2?' style="background:#f9f9f9"':''}>${hasRef?`<td class="ref">${esc(it.ref||"")}</td>`:""}<td>${esc(it.label||"")}</td><td class="r">${esc(qte(it.qty))}${it.unit?" "+esc(it.unit):""}</td><td class="r">${eur(it.unitPrice)}</td><td class="r">${eur(lt)}</td></tr>`;
+  }).join("") || `<tr><td colspan="${nCols}" style="color:#999">Aucune ligne</td></tr>`;
   const sigBlock = isEst ? `<div class="sr">
     <div><div class="sl">Bon pour accord — Signature du client</div><div class="sb">${doc.signature?`<img src="${doc.signature}" style="max-height:72px;max-width:100%;display:block;margin:auto;"/>`:`<div style="color:#bbb;line-height:80px;text-align:center;font-size:11px;">Non signée</div>`}</div><div class="sn">${esc(doc.clientName||"")}</div></div>
     <div><div class="sl">Cachet / Visa atelier</div><div class="sb"></div></div></div>` : "";
@@ -450,7 +453,7 @@ function docHTML(doc) {
     ? (doc.validUntil?`<div class="om">Valable jusqu'au ${fD(doc.validUntil)}</div>`:"")
     : (doc.validUntil?`<div class="om">Échéance : ${fD(doc.validUntil)}</div>`:"");
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(doc.docNum||"")}</title>
-<style>*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#111;background:#fff;}.page{padding:12mm 15mm;max-width:210mm;margin:0 auto;}.hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #1d4ed8;padding-bottom:10px;margin-bottom:14px;}.bn{font-size:20px;font-weight:bold;color:#1d4ed8;}.bs{font-size:10px;color:#555;margin-top:2px;}.on{font-size:22px;font-weight:bold;color:#1d4ed8;text-align:right;}.om{font-size:10px;color:#555;text-align:right;margin-top:2px;}.sec{margin-bottom:10px;}.sh{background:#1d4ed8;color:#fff;padding:4px 10px;font-size:11px;font-weight:bold;margin-bottom:6px;}.grid{display:grid;gap:6px 10px;}.g2{grid-template-columns:1fr 1fr;}.vl{font-size:13px;font-weight:bold;}table{width:100%;border-collapse:collapse;font-size:11px;margin-top:4px;}th{background:#1d4ed8;color:#fff;text-align:left;padding:5px 8px;font-size:10px;white-space:nowrap;}td{padding:5px 8px;border-bottom:1px solid #eee;}td.r,th.r{text-align:right;white-space:nowrap;}.tot{margin-top:10px;margin-left:auto;width:55%;}.tot div{display:flex;justify-content:space-between;padding:3px 8px;font-size:12px;}.tot .ttc{background:#1d4ed8;color:#fff;font-weight:bold;font-size:13px;border-radius:4px;}.tb{border:1px solid #ddd;padding:6px 8px;min-height:40px;font-size:11px;white-space:pre-wrap;}.sr{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:16px;padding-top:12px;border-top:2px solid #1d4ed8;}.sl{font-size:10px;color:#333;font-weight:bold;margin-bottom:5px;}.sb{border:1px solid #999;height:82px;background:#fafafa;overflow:hidden;}.sn{font-size:9px;color:#888;text-align:center;margin-top:3px;}.foot{margin-top:14px;padding-top:8px;border-top:1px solid #ddd;font-size:9px;color:#aaa;text-align:center;}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}</style>
+<style>*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#111;background:#fff;}.page{padding:12mm 15mm;max-width:210mm;margin:0 auto;}.hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #1d4ed8;padding-bottom:10px;margin-bottom:14px;}.bn{font-size:20px;font-weight:bold;color:#1d4ed8;}.bs{font-size:10px;color:#555;margin-top:2px;}.on{font-size:22px;font-weight:bold;color:#1d4ed8;text-align:right;}.om{font-size:10px;color:#555;text-align:right;margin-top:2px;}.sec{margin-bottom:10px;}.sh{background:#1d4ed8;color:#fff;padding:4px 10px;font-size:11px;font-weight:bold;margin-bottom:6px;}.grid{display:grid;gap:6px 10px;}.g2{grid-template-columns:1fr 1fr;}.vl{font-size:13px;font-weight:bold;}table{width:100%;border-collapse:collapse;font-size:11px;margin-top:4px;}th{background:#1d4ed8;color:#fff;text-align:left;padding:5px 8px;font-size:10px;white-space:nowrap;}td{padding:5px 8px;border-bottom:1px solid #eee;}td.r,th.r{text-align:right;white-space:nowrap;}td.ref{white-space:nowrap;font-family:"Courier New",monospace;font-size:10px;color:#333;}.tot{margin-top:10px;margin-left:auto;width:55%;}.tot div{display:flex;justify-content:space-between;padding:3px 8px;font-size:12px;}.tot .ttc{background:#1d4ed8;color:#fff;font-weight:bold;font-size:13px;border-radius:4px;}.tb{border:1px solid #ddd;padding:6px 8px;min-height:40px;font-size:11px;white-space:pre-wrap;}.sr{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:16px;padding-top:12px;border-top:2px solid #1d4ed8;}.sl{font-size:10px;color:#333;font-weight:bold;margin-bottom:5px;}.sb{border:1px solid #999;height:82px;background:#fafafa;overflow:hidden;}.sn{font-size:9px;color:#888;text-align:center;margin-top:3px;}.foot{margin-top:14px;padding-top:8px;border-top:1px solid #ddd;font-size:9px;color:#aaa;text-align:center;}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}</style>
 </head><body><div class="page">
 <div class="hdr"><div><div class="bn">Lycée Gallieni</div><div class="bs">Atelier BTS Maintenance des Véhicules</div><div class="bs" style="font-weight:bold;margin-top:5px;font-size:13px;">${isEst?"DEVIS / ESTIMATION":"FACTURE"}</div></div>
 <div><div class="on">${esc(doc.docNum||"")}</div><div class="om">Date : ${fD(doc.createdAt||today())}</div>${dateLine}<div class="om">Établi par : ${esc(doc.createdBy||"—")}</div></div></div>
@@ -458,7 +461,7 @@ function docHTML(doc) {
 <div class="sec"><div class="sh">Client</div><div class="vl">${esc(doc.clientName||"—")}</div><div class="bs">${esc(doc.clientPhone||"")}</div></div>
 <div class="sec"><div class="sh">Véhicule</div><div class="vl">${esc(doc.plate||"—")}</div><div class="bs">${esc(doc.brand||"")} ${esc(doc.model||"")} ${doc.year?"("+esc(doc.year)+")":""} ${doc.km?"· "+esc(doc.km)+" km":""}</div></div></div>
 <div class="sec"><div class="sh">Détail des prestations</div>
-<table><thead><tr><th>Désignation</th><th class="r">Qté</th><th class="r">PU${isTTC(doc)?(num(doc.tvaRate)?" TTC":""):" HT"}</th><th class="r">Total${isTTC(doc)?(num(doc.tvaRate)?" TTC":""):" HT"}</th></tr></thead><tbody>${rows}</tbody></table>
+<table><thead><tr>${hasRef?`<th style="width:18%">Référence</th>`:""}<th>Désignation</th><th class="r">Qté</th><th class="r">PU${isTTC(doc)?(num(doc.tvaRate)?" TTC":""):" HT"}</th><th class="r">Total${isTTC(doc)?(num(doc.tvaRate)?" TTC":""):" HT"}</th></tr></thead><tbody>${rows}</tbody></table>
 ${isTTC(doc)&&num(doc.tvaRate)?`<div style="font-size:9.5px;color:#666;margin-top:4px;">Prix indiqués toutes taxes comprises.</div>`:""}
 <div class="tot">${num(doc.tvaRate)?`<div><span>Total HT</span><span>${eur(t.ht)}</span></div><div><span>TVA (${esc(String(doc.tvaRate??0))} %)</span><span>${eur(t.tva)}</span></div>`:`<div><span>TVA non applicable - 0%</span><span>${eur(0)}</span></div>`}<div class="ttc"><span>Total${num(doc.tvaRate)?" TTC":""}</span><span>${eur(t.ttc)}</span></div></div></div>
 ${doc.notes?`<div class="sec"><div class="sh">Notes</div><div class="tb">${esc(doc.notes)}</div></div>`:""}
@@ -1932,11 +1935,11 @@ function DocForm({ kind, initial, orders, documents, tariffs, addDocument, editD
       clientName:p.clientName||o.clientName||"", clientPhone:p.clientPhone||o.clientPhone||"",
       plate:p.plate||o.plate||"", brand:p.brand||o.brand||"", model:p.model||o.model||"",
       year:p.year||o.year||"", km:p.km||o.km||"",
-      items:(p.items&&p.items.length)?p.items:(o.tasks||[]).map(tk=>({label:tk.label,qty:1,unitPrice:0})),
+      items:(p.items&&p.items.length)?p.items:(o.tasks||[]).map(tk=>({ref:"",label:tk.label,qty:1,unitPrice:0,unit:""})),
     };
   });
-  const addLine=()=>sd(p=>({...p,items:[...p.items,{label:"",qty:1,unitPrice:0,unit:""}]}));
-  const addTarif=(t)=>sd(p=>({...p,items:[...p.items,{label:t.label||t.short,qty:1,unitPrice:t.price,unit:t.unit}]}));
+  const addLine=()=>sd(p=>({...p,items:[...p.items,{ref:"",label:"",qty:1,unitPrice:0,unit:""}]}));
+  const addTarif=(t)=>sd(p=>({...p,items:[...p.items,{ref:"",label:t.label||t.short,qty:1,unitPrice:t.price,unit:t.unit}]}));
   const tarifs=(tariffs||[]).filter(t=>t.active);
   const setLine=(i,k,v)=>sd(p=>({...p,items:p.items.map((it,j)=>j===i?{...it,[k]:v}:it)}));
   const delLine=(i)=>sd(p=>({...p,items:p.items.filter((_,j)=>j!==i)}));
@@ -1944,7 +1947,7 @@ function DocForm({ kind, initial, orders, documents, tariffs, addDocument, editD
   const save=async()=>{
     if(!d.clientName.trim()){notify("Le nom du client est obligatoire","error");return;}
     const clean={...d, tvaRate:num(d.tvaRate), priceMode:d.priceMode==="ht"?"ht":"ttc",
-      items:d.items.map(it=>({label:it.label||"",qty:Number(it.qty)||0,unitPrice:Number(it.unitPrice)||0,unit:it.unit||""}))};
+      items:d.items.map(it=>({ref:(it.ref||"").trim(),label:it.label||"",qty:Number(it.qty)||0,unitPrice:Number(it.unitPrice)||0,unit:it.unit||""}))};
     sbusy(true);
     try{
       if(isNew){ const created=await addDocument({...clean,createdBy:user.name}); sd(created); notify(label+" créée : "+created.docNum); archiveDocToDrive(created,notify); }
@@ -2025,12 +2028,13 @@ function DocForm({ kind, initial, orders, documents, tariffs, addDocument, editD
           </p>
         </div>
         <div style={{overflowX:"auto"}}>
-         <div style={{minWidth:540,display:"flex",flexDirection:"column",gap:6}}>
+         <div style={{minWidth:680,display:"flex",flexDirection:"column",gap:6}}>
           <div style={{display:"flex",gap:8,fontSize:11,color:C.mut,fontWeight:600,padding:"0 4px"}}>
-            <span style={{flex:1}}>Désignation</span><span style={{width:62,textAlign:"right"}}>Qté</span><span style={{width:52}}>Unité</span><span style={{width:88,textAlign:"right"}}>{isTTC(d)?(num(d.tvaRate)>0?"PU TTC":"PU"):"PU HT"}</span><span style={{width:92,textAlign:"right"}}>Total</span><span style={{width:24}}/>
+            <span style={{width:118}}>Référence</span><span style={{flex:1}}>Désignation</span><span style={{width:62,textAlign:"right"}}>Qté</span><span style={{width:52}}>Unité</span><span style={{width:88,textAlign:"right"}}>{isTTC(d)?(num(d.tvaRate)>0?"PU TTC":"PU"):"PU HT"}</span><span style={{width:92,textAlign:"right"}}>Total</span><span style={{width:24}}/>
           </div>
           {d.items.map((it,i)=>{const lt=(Number(it.qty)||0)*(Number(it.unitPrice)||0);return(
             <div key={i} style={{display:"flex",gap:8,alignItems:"center"}}>
+              <input value={it.ref||""} onChange={e=>setLine(i,"ref",e.target.value)} placeholder="Réf. pièce" style={{width:118,background:"#f1f5f9",border:"1px solid "+C.bdr,borderRadius:6,padding:"7px 9px",color:C.sub,fontSize:12,outline:"none",fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace"}}/>
               <input value={it.label} onChange={e=>setLine(i,"label",e.target.value)} placeholder="Vidange, plaquettes..." style={{flex:1,background:"#f1f5f9",border:"1px solid "+C.bdr,borderRadius:6,padding:"7px 9px",color:C.txt,fontSize:13,outline:"none"}}/>
               <input type="number" step="any" value={it.qty} onChange={e=>setLine(i,"qty",e.target.value)} style={{width:62,background:"#f1f5f9",border:"1px solid "+C.bdr,borderRadius:6,padding:"7px 6px",color:C.txt,fontSize:13,outline:"none",textAlign:"right"}}/>
               <input value={it.unit||""} onChange={e=>setLine(i,"unit",e.target.value)} placeholder="h, g…" style={{width:52,background:"#f1f5f9",border:"1px solid "+C.bdr,borderRadius:6,padding:"7px 6px",color:C.sub,fontSize:12,outline:"none"}}/>

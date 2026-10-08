@@ -17,6 +17,7 @@ export function rowToOrder(r) {
     fileRef: r.file_ref || "",
     plate: r.plate, brand: r.brand, model: r.model,
     year: r.year || "", km: r.km || "",
+    vin: r.vin || "",
     vtype: r.vtype,
     clientName: r.client_name || "", clientPhone: r.client_phone || "",
     teacher: r.teacher || "",
@@ -81,7 +82,7 @@ export function rowToDoc(r) {
     id: r.id, kind: r.kind, docNum: r.doc_num, orderId: r.order_id || "",
     clientName: r.client_name || "", clientPhone: r.client_phone || "",
     plate: r.plate || "", brand: r.brand || "", model: r.model || "",
-    year: r.year || "", km: r.km || "",
+    year: r.year || "", km: r.km || "", vin: r.vin || "",
     items: Array.isArray(r.items) ? r.items : [],
     tvaRate: r.tva_rate != null ? Number(r.tva_rate) : 20,
     // 'ttc' : prix saisis TVA incluse · 'ht' : TVA ajoutée (documents antérieurs)
@@ -126,7 +127,7 @@ export async function deleteDocument(id) {
 // Lecture : tous ; écriture : enseignants et administrateurs (RLS).
 export function rowToVh(r) {
   return {
-    id: r.id, plate: r.plate || "", brand: r.brand || "", model: r.model || "",
+    id: r.id, plate: r.plate || "", brand: r.brand || "", model: r.model || "", vin: r.vin || "",
     date: r.date || "", km: r.km || "", kind: r.kind || "entretien",
     label: r.label || "", details: r.details || "",
     createdBy: r.created_by || "", createdAt: r.created_at,
@@ -134,7 +135,7 @@ export function rowToVh(r) {
 }
 function vhToRow(v) {
   const row = {};
-  for (const k of ["plate", "brand", "model", "km", "kind", "label", "details", "createdBy"])
+  for (const k of ["plate", "brand", "model", "vin", "km", "kind", "label", "details", "createdBy"])
     if (k in v) row[camelToSnake(k)] = v[k];
   if ("date" in v) row.date = v.date || null;
   return row;

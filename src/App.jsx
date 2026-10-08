@@ -75,21 +75,21 @@ const kmTxt = (k) => {
 function buildVehicles(orders, documents, history) {
   const rows = [];
   (orders || []).forEach(o => rows.push({ plate:o.plate, date:o.exitDate||o.entryDate||o.createdAt||"",
-    brand:o.brand, model:o.model, year:o.year, km:o.km,
+    brand:o.brand, model:o.model, year:o.year, km:o.km, vin:vinOf(o),
     client:o.vtype === "peda" ? "Véhicule pédagogique" : (o.clientName || ""), src:"or" }));
   (documents || []).forEach(d => rows.push({ plate:d.plate, date:(d.createdAt||"").slice(0,10),
-    brand:d.brand, model:d.model, year:d.year, km:d.km, client:d.clientName || "", src:"doc" }));
+    brand:d.brand, model:d.model, year:d.year, km:d.km, vin:d.vin, client:d.clientName || "", src:"doc" }));
   (history || []).forEach(h => rows.push({ plate:h.plate, date:h.date||(h.createdAt||"").slice(0,10),
-    brand:h.brand, model:h.model, year:"", km:h.km, client:"", src:"vh" }));
+    brand:h.brand, model:h.model, year:"", km:h.km, vin:h.vin, client:"", src:"vh" }));
   const map = new Map();
   rows.filter(r => plateKey(r.plate))
       .sort((a, b) => String(a.date).localeCompare(String(b.date)))   // du plus ancien au plus récent
       .forEach(r => {
         const k = plateKey(r.plate);
-        const v = map.get(k) || { key:k, plate:r.plate, brand:"", model:"", year:"", km:"", client:"",
+        const v = map.get(k) || { key:k, plate:r.plate, brand:"", model:"", year:"", km:"", vin:"", client:"",
                                   last:"", nOrders:0, nDocs:0, nNotes:0 };
         if (r.plate) v.plate = plateFmt(r.plate);
-        for (const f of ["brand", "model", "year", "km", "client"]) if (r[f]) v[f] = r[f];
+        for (const f of ["brand", "model", "year", "km", "vin", "client"]) if (r[f]) v[f] = r[f];
         if (String(r.date) > String(v.last)) v.last = r.date;
         if (r.src === "or") v.nOrders++; else if (r.src === "doc") v.nDocs++; else v.nNotes++;
         map.set(k, v);
@@ -182,7 +182,7 @@ const EV_STEPS = [
 ];
 const evStep0 = () => ({ name:"", date:"", time:"", visa:"" });
 const EV0 = () => ({
-  energy:"", vin:"", firstReg:"",
+  energy:"", firstReg:"",
   clientAddress:"", clientEmail:"", clientContact:"",
   opType:"non_elec", quoteAmount:"", returnDate:"", returnTime:"",
   steps: EV_STEPS.reduce((a, st) => { a[st.id] = evStep0(); return a; }, {}),
@@ -194,6 +194,8 @@ const evOpen  = (ev) => !!ev && ev.opType !== "non_elec" && evDone(evStep(ev,"co
 // Opération électrique dont la consignation n'est pas horodatée → interdiction d'intervenir.
 const evTodo  = (ev) => !!ev && ev.opType !== "non_elec" && !evDone(evStep(ev,"consign"));
 const evWhen  = (st) => evDone(st) ? fD(st.date) + (st.time ? " à " + st.time : "") : "";
+// VIN de l'ordre ; les OR VE/VH antérieurs le portaient dans `ev`.
+const vinOf = (o) => (o && (o.vin || (o.ev && o.ev.vin))) || "";
 
 // ── Données Supabase (remplace localStorage) ──
 // Collection générique : fetch initial + abonnement realtime (refetch sur
@@ -298,10 +300,10 @@ function csvExport(rows, fname) {
   const a = document.createElement("a"); a.href = URL.createObjectURL(b); a.download = fname; a.click();
 }
 function toCSV(orders) {
-  const H = ["N° OR","Réf.","Immat.","Marque","Modèle","Année","KM","Type","Client/Enseignant","Élèves","Motif","Date d'entrée","Heure","Date de sortie","Statut","Tâches OK","Tâches total","Observations","Ventes add.","Signature accord","Créé par",
+  const H = ["N° OR","Réf.","Immat.","VIN","Marque","Modèle","Année","KM","Type","Client/Enseignant","Élèves","Motif","Date d'entrée","Heure","Date de sortie","Statut","Tâches OK","Tâches total","Observations","Ventes add.","Signature accord","Créé par",
              "VE/VH","Énergie","VIN","Type d'opération","Consignation","Déconsignation"];
   return [H, ...orders.map(o => [
-    o.orderNum, o.fileRef||"", o.plate, o.brand, o.model, o.year||"", o.km||"",
+    o.orderNum, o.fileRef||"", o.plate, vinOf(o), o.brand, o.model, o.year||"", o.km||"",
     o.vtype==="peda"?"Pédagogique":"Client",
     o.vtype==="client"?(o.clientName||""):(o.teacher||""),
     o.students||"", o.reason||"", fD(o.entryDate), o.entryTime||"", fD(o.exitDate),
@@ -393,11 +395,12 @@ function orderHTML(order) {
 <div><div class="lb">Marque</div><div class="vl">${esc(order.brand)}</div></div>
 <div><div class="lb">Modèle</div><div class="vl">${esc(order.model)}</div></div>
 <div><div class="lb">Année</div><div class="vl">${esc(order.year||"—")}</div></div>
-<div><div class="lb">Kilométrage</div><div class="vl">${order.km?esc(order.km)+" km":"—"}</div></div></div>${ev?`
-<div class="grid g3" style="margin-top:6px;">
+<div><div class="lb">Kilométrage</div><div class="vl">${order.km?esc(order.km)+" km":"—"}</div></div></div>
+<div class="grid ${ev?"g3":"g2"}" style="margin-top:6px;">
+<div><div class="lb">VIN – 17 caractères (repère E)</div><div class="vl">${esc(vinOf(order)||"—")}</div></div>${ev?`
 <div><div class="lb">Énergie (repère P.3)</div><div class="vl">${esc(ev.energy||"—")}</div></div>
-<div><div class="lb">VIN – 17 caractères (repère E)</div><div class="vl">${esc(ev.vin||"—")}</div></div>
-<div><div class="lb">1re immatriculation (repère B)</div><div class="vl">${ev.firstReg?fD(ev.firstReg):"—"}</div></div></div>`:""}
+<div><div class="lb">1re immatriculation (repère B)</div><div class="vl">${ev.firstReg?fD(ev.firstReg):"—"}</div></div>`:`
+<div><div class="lb">Réf. dossier</div><div class="vl">${esc(order.fileRef||"—")}</div></div>`}</div>
 <div style="margin-top:7px;"><span class="bdg" style="background:${isPeda?"#ffedd5":"#dbeafe"};color:${isPeda?"#9a3412":"#1e40af"};">${isPeda?"🎓 Véhicule pédagogique":"👤 Véhicule client"}</span>${ev?`<span class="bdg" style="background:#fef9c3;color:#a16207;margin-left:6px;">⚡ Véhicule électrique / hybride</span>`:""}</div></div>
 ${ev&&ev.opType!=="non_elec"?`<div class="warn">⚠ Opération sur le circuit haute tension : la batterie de traction doit être mise en sécurité (consignation) par un chargé de consignation BCL avant toute intervention.</div>`:""}
 ${personBlock}
@@ -459,7 +462,7 @@ function docHTML(doc) {
 <div><div class="on">${esc(doc.docNum||"")}</div><div class="om">Date : ${fD(doc.createdAt||today())}</div>${dateLine}<div class="om">Établi par : ${esc(doc.createdBy||"—")}</div></div></div>
 <div class="grid g2">
 <div class="sec"><div class="sh">Client</div><div class="vl">${esc(doc.clientName||"—")}</div><div class="bs">${esc(doc.clientPhone||"")}</div></div>
-<div class="sec"><div class="sh">Véhicule</div><div class="vl">${esc(doc.plate||"—")}</div><div class="bs">${esc(doc.brand||"")} ${esc(doc.model||"")} ${doc.year?"("+esc(doc.year)+")":""} ${doc.km?"· "+esc(doc.km)+" km":""}</div></div></div>
+<div class="sec"><div class="sh">Véhicule</div><div class="vl">${esc(doc.plate||"—")}</div><div class="bs">${esc(doc.brand||"")} ${esc(doc.model||"")} ${doc.year?"("+esc(doc.year)+")":""} ${doc.km?"· "+esc(doc.km)+" km":""}</div>${doc.vin?`<div class="bs" style="font-family:'Courier New',monospace;">VIN ${esc(doc.vin)}</div>`:""}</div></div>
 <div class="sec"><div class="sh">Détail des prestations</div>
 <table><thead><tr>${hasRef?`<th style="width:18%">Référence</th>`:""}<th>Désignation</th><th class="r">Qté</th><th class="r">PU${isTTC(doc)?(num(doc.tvaRate)?" TTC":""):" HT"}</th><th class="r">Total${isTTC(doc)?(num(doc.tvaRate)?" TTC":""):" HT"}</th></tr></thead><tbody>${rows}</tbody></table>
 ${isTTC(doc)&&num(doc.tvaRate)?`<div style="font-size:9.5px;color:#666;margin-top:4px;">Prix indiqués toutes taxes comprises.</div>`:""}
@@ -854,7 +857,7 @@ function StudentPicker({ students, selected, onToggle }) {
 function NewOrderForm({ addOrder, teachers, students, user, nav, selOrd, notify }) {
   const [busy,sbusy] = useState(false);
   const [f,sf] = useState({
-    plate:"", brand:"", model:"", year:"", km:"", vtype:"client",
+    plate:"", brand:"", model:"", year:"", km:"", vin:"", vtype:"client",
     clientName:"", clientPhone:"", entryDate:today(), entryTime:tNow(),
     reason:"", fileRef:"",
     teacher: user.role==="enseignant"?user.name:"",
@@ -874,7 +877,7 @@ function NewOrderForm({ addOrder, teachers, students, user, nav, selOrd, notify 
     if(!f.plate.trim()||!f.brand.trim()||!f.model.trim()){notify("Immatriculation, marque et modèle sont obligatoires","error");return;}
     const o={
       fileRef:f.fileRef,
-      plate:f.plate.toUpperCase(),brand:f.brand,model:f.model,year:f.year,km:f.km,
+      plate:f.plate.toUpperCase(),brand:f.brand,model:f.model,year:f.year,km:f.km,vin:f.vin.toUpperCase().trim(),
       vtype:f.vtype,clientName:f.clientName,clientPhone:f.clientPhone,
       entryDate:f.entryDate,entryTime:f.entryTime,reason:f.reason,
       teacher:f.teacher,assignedStudents:f.vtype==="peda"?f.selStu:[],
@@ -925,9 +928,9 @@ function NewOrderForm({ addOrder, teachers, students, user, nav, selOrd, notify 
           <Inp label="Modèle *" value={f.model} onChange={v=>set("model",v)} placeholder="308 SW"/>
           <Inp label="Année" value={f.year} onChange={v=>set("year",v)} placeholder="2020"/>
           <Inp label="Kilométrage" value={f.km} onChange={v=>set("km",v)} placeholder="45000"/>
+          <Inp label="VIN – 17 caractères (repère E)" value={f.vin} onChange={v=>set("vin",v.toUpperCase())} placeholder="VF3XXXXXXXXXXXXXX"/>
           <Sel label="Type de véhicule" value={f.vtype} onChange={v=>set("vtype",v)} opts={[{v:"client",l:"👤 Véhicule client"},{v:"peda",l:"🎓 Véhicule pédagogique"}]}/>
           {isEv && <Sel label="Énergie (repère P.3)" value={f.ev.energy} onChange={v=>setEv("energy",v)} opts={EV_ENERGIES.map(e=>({v:e,l:e||"— Choisir —"}))}/>}
-          {isEv && <Inp label="VIN – 17 caractères (repère E)" value={f.ev.vin} onChange={v=>setEv("vin",v.toUpperCase())} placeholder="VF3XXXXXXXXXXXXXX"/>}
           {isEv && <Inp label="1re immatriculation (repère B)" value={f.ev.firstReg} onChange={v=>setEv("firstReg",v)} type="date"/>}
         </div>
         <SecTitle>📁 Dossier</SecTitle>
@@ -1068,7 +1071,7 @@ function NewOrderForm({ addOrder, teachers, students, user, nav, selOrd, notify 
 function VhModal({ init, plate, user, onSave, onClose }) {
   const [f,sf]=useState(()=> init
     ? {...init}
-    : { plate:plate||"", brand:"", model:"", date:today(), km:"", kind:"entretien", label:"", details:"" });
+    : { plate:plate||"", brand:"", model:"", vin:"", date:today(), km:"", kind:"entretien", label:"", details:"" });
   const [busy,sbusy]=useState(false);
   const set=(k,v)=>sf(p=>({...p,[k]:v}));
   const ok=async()=>{
@@ -1090,6 +1093,7 @@ function VhModal({ init, plate, user, onSave, onClose }) {
           <Sel label="Nature" value={f.kind} onChange={v=>set("kind",v)} opts={VH_KINDS.map(k=>({v:k.v,l:k.ico+" "+k.l}))}/>
           <Inp label="Marque" value={f.brand} onChange={v=>set("brand",v)} placeholder="Peugeot"/>
           <Inp label="Modèle" value={f.model} onChange={v=>set("model",v)} placeholder="308 SW"/>
+          <Inp label="VIN (repère E)" value={f.vin||""} onChange={v=>set("vin",v.toUpperCase())} placeholder="VF3XXXXXXXXXXXXXX"/>
         </div>
         <div style={{marginBottom:12}}>
           <Inp label="Intervention *" value={f.label} onChange={v=>set("label",v)} placeholder="Vidange + filtre à huile"/>
@@ -1112,7 +1116,7 @@ function VehiclesView({ orders, documents, vehicleHistory, user, nav, selOrd, op
   const vehicles=buildVehicles(orders,documents,vehicleHistory);
   const needle=q.trim().toLowerCase(), nKey=plateKey(q);
   const shown=!needle?vehicles:vehicles.filter(v=>
-    (nKey&&v.key.includes(nKey))||[v.plate,v.brand,v.model,v.client].join(" ").toLowerCase().includes(needle));
+    (nKey&&v.key.includes(nKey))||[v.plate,v.brand,v.model,v.vin,v.client].join(" ").toLowerCase().includes(needle));
   const v=sel?vehicles.find(x=>x.key===sel):null;
 
   const save=async(data)=>{
@@ -1145,6 +1149,7 @@ function VehiclesView({ orders, documents, vehicleHistory, user, nav, selOrd, op
             <div>
               <h2 style={{color:C.txt,fontSize:22,fontWeight:700,margin:0,letterSpacing:.5}}>🚙 {v.plate}</h2>
               <div style={{color:C.sub,fontSize:14,marginTop:4}}>{[v.brand,v.model,v.year&&"("+v.year+")"].filter(Boolean).join(" ")||"Véhicule non identifié"}</div>
+              {v.vin&&<div style={{color:C.mut,fontSize:12,marginTop:2,fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace"}}>VIN {v.vin}</div>}
               {v.client&&<div style={{color:C.mut,fontSize:12,marginTop:2}}>{v.client}</div>}
             </div>
             {isStaff&&<Btn sm onClick={()=>smodal({plate:v.plate})}>➕ Ajouter une intervention</Btn>}
@@ -1229,7 +1234,7 @@ function VehiclesView({ orders, documents, vehicleHistory, user, nav, selOrd, op
         {isStaff&&<Btn sm onClick={()=>smodal({plate:q.trim().toUpperCase()})}>➕ Ajouter une intervention</Btn>}
       </div>
       <Crd style={{marginBottom:14}}>
-        <input value={q} onChange={e=>sq(e.target.value)} placeholder="Rechercher une immatriculation, une marque, un modèle, un client…"
+        <input value={q} onChange={e=>sq(e.target.value)} placeholder="Rechercher : immatriculation, VIN, marque, modèle, client…"
           style={{width:"100%",background:"#f1f5f9",border:"1px solid "+C.bdr,borderRadius:8,padding:"11px 14px",color:C.txt,fontSize:15,outline:"none",fontFamily:"inherit"}}/>
         <p style={{color:C.mut,fontSize:12,margin:"8px 0 0"}}>
           {vehicles.length} véhicule(s) connu(s) de l'atelier. La ponctuation de la plaque n'a pas d'importance : « ab123cd » trouve « AB-123-CD ».
@@ -1254,6 +1259,7 @@ function VehiclesView({ orders, documents, vehicleHistory, user, nav, selOrd, op
               onMouseLeave={e=>e.currentTarget.style.borderColor=C.bdr}>
               <div style={{color:C.txt,fontWeight:700,fontSize:17,letterSpacing:.5}}>{x.plate}</div>
               <div style={{color:C.sub,fontSize:13,marginTop:2}}>{[x.brand,x.model].filter(Boolean).join(" ")||"—"}{x.year?" ("+x.year+")":""}</div>
+              {x.vin&&<div style={{color:C.mut,fontSize:11,marginTop:2,fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace"}}>{x.vin}</div>}
               {x.client&&<div style={{color:C.mut,fontSize:12,marginTop:2}}>{x.client}</div>}
               <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:10}}>
                 {x.nOrders>0&&<span style={{fontSize:11,padding:"2px 8px",borderRadius:999,background:"#dbeafe",color:"#1d4ed8"}}>{x.nOrders} OR</span>}
@@ -1316,7 +1322,7 @@ function OrderDetail({ orderId, orders, editOrder, removeOrder, isAdmin, user, n
       <Crd style={{marginBottom:12}}>
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:12,fontSize:13}}>
           {[{k:"N° OR",v:o.orderNum},{k:"Réf. dossier",v:o.fileRef||"—"},{k:"Entrée",v:fD(o.entryDate)+" "+o.entryTime},{k:isPeda?"Enseignant":"Client",v:isPeda?(o.teacher||"—"):(o.clientName||"—")}]
-            .concat(o.clientPhone?[{k:"Tel.",v:o.clientPhone}]:[],o.students?[{k:"Élèves",v:o.students}]:[],[{k:"Avancement",v:dn+"/"+tot+" ("+pct+"%)"}])
+            .concat(vinOf(o)?[{k:"VIN",v:vinOf(o)}]:[],o.clientPhone?[{k:"Tel.",v:o.clientPhone}]:[],o.students?[{k:"Élèves",v:o.students}]:[],[{k:"Avancement",v:dn+"/"+tot+" ("+pct+"%)"}])
             .map(item=>(
               <div key={item.k}>
                 <div style={{color:C.mut,fontSize:11,marginBottom:2}}>{item.k}</div>
@@ -1376,7 +1382,7 @@ function OrderDetail({ orderId, orders, editOrder, removeOrder, isAdmin, user, n
             <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
               <span style={{fontSize:12,fontWeight:700,padding:"4px 12px",borderRadius:999,background:evOp(o.ev.opType).bg,color:evOp(o.ev.opType).col}}>{evOp(o.ev.opType).l}</span>
               {o.ev.energy&&<span style={{fontSize:12,color:C.sub}}>🔋 {o.ev.energy}</span>}
-              {o.ev.vin&&<span style={{fontSize:12,color:C.mut}}>VIN {o.ev.vin}</span>}
+              {vinOf(o)&&<span style={{fontSize:12,color:C.mut}}>VIN {vinOf(o)}</span>}
               {o.ev.firstReg&&<span style={{fontSize:12,color:C.mut}}>1re immat. {fD(o.ev.firstReg)}</span>}
             </div>
             <div style={{marginTop:10,padding:"10px 12px",borderRadius:8,fontSize:13,fontWeight:600,
@@ -1912,7 +1918,7 @@ function DocsList({ kind, documents, openDoc, newDoc }) {
 function DocForm({ kind, initial, orders, documents, tariffs, addDocument, editDocument, removeDocument, isAdmin, user, nav, notify }) {
   const label=DOC_LABEL[kind];
   const back=()=>nav(kind==="estimate"?"estimates":"invoices");
-  const [d,sd]=useState(()=> initial ? {...initial} : { kind, orderId:"", clientName:"", clientPhone:"", plate:"", brand:"", model:"", year:"", km:"", items:[], tvaRate:0, priceMode:"ttc", signature:"", notes:"", validUntil:"" });
+  const [d,sd]=useState(()=> initial ? {...initial} : { kind, orderId:"", clientName:"", clientPhone:"", plate:"", brand:"", model:"", year:"", km:"", vin:"", items:[], tvaRate:0, priceMode:"ttc", signature:"", notes:"", validUntil:"" });
   const [busy,sbusy]=useState(false);
   const [srcEst,setSrcEst]=useState("");
   const isNew=!d.id;
@@ -1923,7 +1929,7 @@ function DocForm({ kind, initial, orders, documents, tariffs, addDocument, editD
     return {...p, orderId:e.orderId||p.orderId||"",
       clientName:e.clientName||"", clientPhone:e.clientPhone||"",
       plate:e.plate||"", brand:e.brand||"", model:e.model||"",
-      year:e.year||"", km:e.km||"",
+      year:e.year||"", km:e.km||"", vin:e.vin||"",
       items:(e.items&&e.items.length)?e.items.map(it=>({...it})):p.items,
       tvaRate:e.tvaRate??p.tvaRate, priceMode:e.priceMode||p.priceMode, notes:e.notes||p.notes };
   }); };
@@ -1934,7 +1940,7 @@ function DocForm({ kind, initial, orders, documents, tariffs, addDocument, editD
     return {...p,orderId:oid,
       clientName:p.clientName||o.clientName||"", clientPhone:p.clientPhone||o.clientPhone||"",
       plate:p.plate||o.plate||"", brand:p.brand||o.brand||"", model:p.model||o.model||"",
-      year:p.year||o.year||"", km:p.km||o.km||"",
+      year:p.year||o.year||"", km:p.km||o.km||"", vin:p.vin||vinOf(o)||"",
       items:(p.items&&p.items.length)?p.items:(o.tasks||[]).map(tk=>({ref:"",label:tk.label,qty:1,unitPrice:0,unit:""})),
     };
   });
@@ -1988,6 +1994,7 @@ function DocForm({ kind, initial, orders, documents, tariffs, addDocument, editD
           <Inp label="Modèle" value={d.model} onChange={v=>set("model",v)}/>
           <Inp label="Année" value={d.year} onChange={v=>set("year",v)}/>
           <Inp label="Km" value={d.km} onChange={v=>set("km",v)}/>
+          <Inp label="VIN (repère E)" value={d.vin||""} onChange={v=>set("vin",v.toUpperCase())} placeholder="VF3XXXXXXXXXXXXXX" style={{fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",fontSize:12}}/>
         </div>
         <SecTitle>💶 Tarifs de l'atelier</SecTitle>
         <p style={{color:C.mut,fontSize:12,margin:"0 0 10px"}}>Un clic ajoute la ligne au document ; il ne reste qu'à saisir la quantité (heures, grammes…). Les montants sont repris {isTTC(d)?<b>tels quels : ce sont ceux payés par le client (TTC)</b>:<b>comme des prix hors taxes</b>}.</p>

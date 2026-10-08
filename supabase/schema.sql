@@ -40,6 +40,7 @@ create table if not exists orders (
   model             text not null,
   year              text default '',
   km                text default '',
+  vin               text default '',                  -- n° d'identification (repère E)
   vtype             text not null check (vtype in ('client','peda')),
   client_name       text default '',
   client_phone      text default '',
@@ -230,7 +231,7 @@ create table if not exists documents (
   order_id     uuid references orders(id) on delete set null,
   client_name  text default '', client_phone text default '',
   plate text default '', brand text default '', model text default '',
-  year text default '', km text default '',
+  year text default '', km text default '', vin text default '',
   items        jsonb default '[]'::jsonb,          -- [{label, qty, unitPrice}]
   tva_rate     numeric default 20,        -- l'application crée les documents à 0
   -- 'ttc' : prix saisis TVA incluse (défaut de l'application, tarifs atelier TTC)
@@ -288,6 +289,12 @@ alter publication supabase_realtime add table documents;
 -- ----------------------------------------------------------------------------
 -- MIGRATION (bases déjà en service) : traçabilité VE/VH
 --   alter table orders add column if not exists ev jsonb;
+-- MIGRATION : VIN dans l'identification du véhicule
+--   alter table orders          add column if not exists vin text default '';
+--   alter table documents       add column if not exists vin text default '';
+--   alter table vehicle_history add column if not exists vin text default '';
+--   update orders set vin = ev->>'vin'
+--     where coalesce(vin,'') = '' and ev is not null and coalesce(ev->>'vin','') <> '';
 -- MIGRATION : créer la table vehicle_history ci-dessous.
 -- MIGRATION : créer la table tariffs ci-dessous (avec son jeu de départ).
 -- MIGRATION : alter table documents add column if not exists price_mode text
@@ -359,6 +366,7 @@ create table if not exists vehicle_history (
   plate      text not null,
   brand      text default '',                 -- secours si le véhicule n'a aucun OR
   model      text default '',
+  vin        text default '',
   date       date,
   km         text default '',
   kind       text not null default 'entretien',  -- entretien|reparation|controle|diagnostic|pneus|autre

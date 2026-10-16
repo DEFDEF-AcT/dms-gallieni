@@ -794,26 +794,49 @@ function OrdCard({ o, onClick }) {
 }
 
 function OrdersList({ orders, nav, selOrd }) {
+  const [scope,ssc]=useState("client");
   const [flt,sf]=useState("active"); const [q,sq]=useState("");
-  const shown = orders.filter(o => {
+  const sc = SCOPES.find(x => x.v === scope) || SCOPES[0];
+  const duScope = orders.filter(o => o.vtype === scope);
+  const shown = duScope.filter(o => {
     const ok = flt==="active"?o.status!=="termine":flt==="all"?true:o.status===flt;
-    return ok && (!q||[o.plate,o.brand,o.model,o.clientName,o.orderNum,o.students].join(" ").toLowerCase().includes(q.toLowerCase()));
+    return ok && (!q||[o.plate,o.brand,o.model,o.clientName,o.teacher,o.orderNum,o.students].join(" ").toLowerCase().includes(q.toLowerCase()));
   });
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:12 }}>
-        <h2 style={{ color:C.txt, fontSize:20, fontWeight:700, margin:0 }}>🔧 Ordres de réparation</h2>
+        <h2 style={{ color:C.txt, fontSize:20, fontWeight:700, margin:0 }}>🔧 Ordres de réparation – {sc.ico} {sc.lbl}</h2>
         <Btn onClick={() => nav("new-order")}>+ Nouvel ordre de réparation</Btn>
+      </div>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:10 }}>
+        {SCOPES.map(x => {
+          const on = scope===x.v;
+          const n = orders.filter(o => o.vtype===x.v);
+          const actifs = n.filter(o => o.status!=="termine").length;
+          return (
+            <button key={x.v} onClick={() => ssc(x.v)} style={{ textAlign:"left", padding:"12px 14px", borderRadius:10, cursor:"pointer",
+              border:"2px solid "+(on?x.col:C.bdr), background:on?x.bg:C.card, color:C.txt, fontFamily:"inherit" }}>
+              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                <span style={{ fontSize:18 }}>{x.ico}</span>
+                <span style={{ fontSize:15, fontWeight:700, color:on?x.col:C.txt }}>{x.lbl}</span>
+              </div>
+              <div style={{ fontSize:11, color:C.mut, marginTop:2 }}>{x.sub}</div>
+              <div style={{ fontSize:12, color:on?x.col:C.sub, marginTop:6, fontWeight:600 }}>
+                {n.length} ordre{n.length>1?"s":""}{actifs?" · "+actifs+" en cours":""}
+              </div>
+            </button>
+          );
+        })}
       </div>
       <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
         {[["active","Actifs"],["en_attente","En attente"],["en_cours","En cours"],["termine","Terminés"],["all","Tous"]].map(([v,l]) => (
           <button key={v} onClick={() => sf(v)} style={{ padding:"6px 14px", borderRadius:6, cursor:"pointer", fontSize:13, border:"1px solid "+(flt===v?"#2563eb":C.bdr), background:flt===v?C.acc:"transparent", color:flt===v?"#fff":C.sub }}>{l}</button>
         ))}
       </div>
-      <input value={q} onChange={e => sq(e.target.value)} placeholder="🔍 Immatriculation, marque, client, n° OR..."
+      <input value={q} onChange={e => sq(e.target.value)} placeholder={scope==="peda"?"🔍 Immatriculation, marque, enseignant, élève, n° OR…":"🔍 Immatriculation, marque, client, n° OR…"}
         style={{ background:C.card, border:"1px solid "+C.bdr, borderRadius:8, padding:"10px 14px", color:C.txt, fontSize:13, outline:"none" }}/>
       {shown.length===0
-        ? <Crd><p style={{ color:C.mut, textAlign:"center", margin:0 }}>Aucun ordre de réparation</p></Crd>
+        ? <Crd><p style={{ color:C.mut, textAlign:"center", margin:0 }}>Aucun ordre de réparation dans le suivi « {sc.lbl} »</p></Crd>
         : <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
             {shown.map(o => {
               const isPeda=o.vtype==="peda";
@@ -829,7 +852,7 @@ function OrdersList({ orders, nav, selOrd }) {
                       <span style={{ fontSize:11, color:isPeda?"#c2410c":"#1d4ed8" }}>{isPeda?"🎓":"👤"}</span>
                       {o.signature && <span style={{ fontSize:11, color:"#059669" }}>✍</span>}
                     </div>
-                    <div style={{ color:C.txt, fontWeight:600 }}>{o.plate} – {o.brand} {o.model}</div>
+                    <div style={{ color:C.txt, fontWeight:600 }}>{plateFmt(o.plate)} – {o.brand} {o.model}</div>
                     <div style={{ color:C.sub, fontSize:12 }}>{isPeda?(o.teacher||"—"):(o.clientName||"—")}</div>
                   </div>
                   <div style={{ textAlign:"right", color:C.mut, fontSize:12 }}>

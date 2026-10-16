@@ -176,6 +176,59 @@ export async function rememberClient({ name, phone, email, createdBy }, known) {
   }
 }
 
+// ── Véhicules rattachés aux clients ─────────────────────────────────────────
+const plateCle = (p) => String(p ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+export function rowToCv(r) {
+  return {
+    id: r.id, clientId: r.client_id, plate: r.plate || "", brand: r.brand || "",
+    model: r.model || "", vin: r.vin || "", firstReg: r.first_reg || "", notes: r.notes || "",
+  };
+}
+function cvToRow(v) {
+  const row = {};
+  if ("clientId" in v) row.client_id = v.clientId;
+  for (const k of ["plate", "brand", "model", "vin", "notes"]) if (k in v) row[k] = (v[k] ?? "").trim();
+  if ("firstReg" in v) row.first_reg = v.firstReg || null;
+  return row;
+}
+export async function listClientVehicles() {
+  const { data, error } = await supabase.from("client_vehicles").select("*").order("plate");
+  if (error) throw error;
+  return data.map(rowToCv);
+}
+export async function insertClientVehicle(v) {
+  const { data, error } = await supabase.from("client_vehicles").insert(cvToRow(v)).select().single();
+  if (error) throw error;
+  return rowToCv(data);
+}
+export async function updateClientVehicle(id, patch) {
+  const { data, error } = await supabase.from("client_vehicles").update(cvToRow(patch)).eq("id", id).select().single();
+  if (error) throw error;
+  return rowToCv(data);
+}
+export async function deleteClientVehicle(id) {
+  const { error } = await supabase.from("client_vehicles").delete().eq("id", id);
+  if (error) throw error;
+}
+// Rattache le véhicule au client s'il ne l'est pas déjà, complète ses
+// caractéristiques manquantes sinon. Silencieux : ne doit jamais bloquer un OR.
+export async function rememberVehicle(v, known) {
+  const cle = plateCle(v.plate);
+  if (!cle || !v.clientId) return null;
+  try {
+    const existing = (known || []).find((x) => plateCle(x.plate) === cle);
+    if (!existing) return await insertClientVehicle(v);
+    const patch = {};
+    if (existing.clientId !== v.clientId) patch.clientId = v.clientId;   // changement de propriétaire
+    for (const k of ["brand", "model", "vin"]) if (v[k] && !existing[k]) patch[k] = v[k];
+    if (v.firstReg && !existing.firstReg) patch.firstReg = v.firstReg;
+    return Object.keys(patch).length ? await updateClientVehicle(existing.id, patch) : existing;
+  } catch (e) {
+    console.warn("[DMS] véhicule non rattaché au client", e?.message || e);
+    return null;
+  }
+}
+
 // ── Historique d'entretien des véhicules ────────────────────────────────────
 // Lecture : tous ; écriture : enseignants et administrateurs (RLS).
 export function rowToVh(r) {

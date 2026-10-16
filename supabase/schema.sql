@@ -441,6 +441,40 @@ create policy del_clients  on clients for delete using (is_staff());
 
 alter publication supabase_realtime add table clients;
 
+-- Véhicules rattachés à un client : proposés dès qu'on choisit le client à la
+-- saisie d'un ordre. Une plaque n'appartient qu'à un client à la fois.
+create table if not exists client_vehicles (
+  id         uuid primary key default gen_random_uuid(),
+  client_id  uuid not null references clients(id) on delete cascade,
+  plate      text not null,
+  brand      text default '',
+  model      text default '',
+  vin        text default '',
+  first_reg  date,
+  notes      text default '',
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+create unique index if not exists client_vehicles_plate_uniq
+  on client_vehicles (upper(regexp_replace(plate, '[^A-Za-z0-9]', '', 'g')));
+create index if not exists client_vehicles_client_idx on client_vehicles (client_id);
+
+drop trigger if exists trg_client_vehicles_touch on client_vehicles;
+create trigger trg_client_vehicles_touch before update on client_vehicles
+  for each row execute function touch_updated_at();
+
+alter table client_vehicles enable row level security;
+drop policy if exists read_client_vehicles on client_vehicles;
+drop policy if exists ins_client_vehicles  on client_vehicles;
+drop policy if exists upd_client_vehicles  on client_vehicles;
+drop policy if exists del_client_vehicles  on client_vehicles;
+create policy read_client_vehicles on client_vehicles for select using (auth.role() = 'authenticated');
+create policy ins_client_vehicles  on client_vehicles for insert with check (is_staff());
+create policy upd_client_vehicles  on client_vehicles for update using (is_staff());
+create policy del_client_vehicles  on client_vehicles for delete using (is_staff());
+
+alter publication supabase_realtime add table client_vehicles;
+
 -- ============================================================================
 -- APRÈS EXÉCUTION :
 --  1) Authentication → Users → Add user : créer un compte staff (email + mdp).

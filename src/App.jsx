@@ -11,6 +11,7 @@ import {
   listVehicleHistory, insertVehicleHistory, updateVehicleHistory, deleteVehicleHistory,
   sendDocsByMail,
   listClients, insertClient, updateClient, deleteClient, rememberClient,
+  listClientVehicles, deleteClientVehicle, rememberVehicle,
 } from "./data";
 
 // Montants / TVA
@@ -210,6 +211,12 @@ const findClient = (list, name) => {
   const n = String(name || "").trim().toLowerCase();
   return n ? (list || []).find(c => c.name.trim().toLowerCase() === n) : undefined;
 };
+// Véhicules d'un client, et propriétaire d'une plaque.
+const clientVehicles = (list, clientId) => (list || []).filter(v => v.clientId === clientId);
+const vehicleOwner = (list, plate) => {
+  const k = plateKey(plate);
+  return k ? (list || []).find(v => plateKey(v.plate) === k) : undefined;
+};
 
 // ── Données Supabase (remplace localStorage) ──
 // Collection générique : fetch initial + abonnement realtime (refetch sur
@@ -257,6 +264,10 @@ function useTariffs(dep) {
 function useClients(dep) {
   const { items, reload } = useCollection(listClients, "clients", dep);
   return { clients: items, reloadClients: reload };
+}
+function useClientVehicles(dep) {
+  const { items, reload } = useCollection(listClientVehicles, "client_vehicles", dep);
+  return { clientVehicles: items, reloadClientVehicles: reload };
 }
 function useVehicleHistory(dep) {
   const { items, reload } = useCollection(listVehicleHistory, "vehicle_history", dep);
@@ -893,7 +904,7 @@ function StudentPicker({ students, selected, onToggle }) {
   );
 }
 
-function NewOrderForm({ addOrder, teachers, students, clients, reloadClients, user, nav, selOrd, notify }) {
+function NewOrderForm({ addOrder, teachers, students, clients, reloadClients, cVehicles, reloadCVehicles, user, nav, selOrd, notify }) {
   const [busy,sbusy] = useState(false);
   const [f,sf] = useState({
     plate:"", brand:"", model:"", firstReg:"", km:"", vin:"", vtype:"client",
@@ -907,6 +918,23 @@ function NewOrderForm({ addOrder, teachers, students, clients, reloadClients, us
   });
   const set=(k,v)=>sf(p=>({...p,[k]:v}));
   const isEv=!!f.ev;
+  // Véhicules déjà rattachés au client choisi, et propriétaire d'une plaque saisie.
+  const cli=findClient(clients,f.clientName);
+  const sesVehicules=cli?clientVehicles(cVehicles,cli.id):[];
+  const prendVehicule=(v)=>sf(p=>({...p, plate:v.plate, brand:v.brand||p.brand, model:v.model||p.model,
+    vin:v.vin||p.vin, firstReg:v.firstReg||p.firstReg }));
+  // Saisir une plaque connue retrouve son propriétaire.
+  const setPlate=(val)=>sf(p=>{
+    const n={...p,plate:val};
+    const prop=vehicleOwner(cVehicles,val);
+    if(prop&&!p.clientName.trim()){
+      const c=(clients||[]).find(x=>x.id===prop.clientId);
+      if(c){ n.clientName=c.name; n.clientPhone=p.clientPhone||c.phone; n.clientEmail=p.clientEmail||c.email; }
+      n.brand=p.brand||prop.brand; n.model=p.model||prop.model;
+      n.vin=p.vin||prop.vin; n.firstReg=p.firstReg||prop.firstReg;
+    }
+    return n;
+  });
   const setEv=(k,v)=>sf(p=>({...p,ev:{...p.ev,[k]:v}}));
   const setEvStep=(id,k,v)=>sf(p=>({...p,ev:{...p.ev,steps:{...p.ev.steps,[id]:{...p.ev.steps[id],[k]:v}}}}));
   const setTask=(id,k,v)=>sf(p=>({...p,tasks:p.tasks.map(t=>t.id===id?{...t,[k]:v}:t)}));
@@ -931,9 +959,16 @@ function NewOrderForm({ addOrder, teachers, students, clients, reloadClients, us
       const created=await addOrder(o);
       // La base clients s'enrichit au fil des ordres (staff uniquement : RLS).
       if(f.vtype==="client"&&f.clientName.trim()&&user.role!=="eleve"){
-        await rememberClient({ name:f.clientName, phone:f.clientPhone, email:f.clientEmail,
+        const fiche=await rememberClient({ name:f.clientName, phone:f.clientPhone, email:f.clientEmail,
           createdBy:user.name }, clients);
         reloadClients&&reloadClients();
+        // Le véhicule suit son propriétaire.
+        const cid=(fiche&&fiche.id)||(findClient(clients,f.clientName)||{}).id;
+        if(cid&&f.plate.trim()){
+          await rememberVehicle({ clientId:cid, plate:f.plate.toUpperCase().trim(), brand:f.brand,
+            model:f.model, vin:f.vin, firstReg:f.firstReg }, cVehicles);
+          reloadCVehicles&&reloadCVehicles();
+        }
       }
       selOrd(created.id);nav("order-detail");notify((f.ev?"Ordre VE/VH ":"Ordre de réparation ")+created.orderNum+" créé");
       archiveToDrive(created, notify);   // archivage PDF sur le Drive (création)
@@ -969,7 +1004,7 @@ function NewOrderForm({ addOrder, teachers, students, clients, reloadClients, us
       <Crd>
         <SecTitle>🚗 Véhicule</SecTitle>
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))", gap:12 }}>
-          <Inp label="Immatriculation *" value={f.plate} onChange={v=>set("plate",v)} placeholder="AB-123-CD"/>
+          <Inp label="Immatriculation *" value={f.plate} onChange={setPlate} placeholder="AB-123-CD"/>
           <Inp label="Marque *" value={f.brand} onChange={v=>set("brand",v)} placeholder="Peugeot"/>
           <Inp label="Modèle *" value={f.model} onChange={v=>set("model",v)} placeholder="308 SW"/>
           <Inp label="Date de 1ère MEC" value={f.firstReg} onChange={v=>set("firstReg",v)} type="date"/>
@@ -997,6 +1032,27 @@ function NewOrderForm({ addOrder, teachers, students, clients, reloadClients, us
               <Inp label="Adresse électronique" value={f.clientEmail} onChange={v=>set("clientEmail",v)} placeholder="client@exemple.fr" type="email"/>
               {isEv && <Inp label="Moyen de contact retenu" value={f.ev.clientContact} onChange={v=>setEv("clientContact",v)} placeholder="Téléphone, SMS, courriel…"/>}
             </div>
+            {sesVehicules.length>0&&(
+              <div style={{ marginTop:12 }}>
+                <label style={{ fontSize:12, color:C.sub, fontWeight:500, display:"block", marginBottom:6 }}>
+                  🚗 Véhicules de ce client
+                </label>
+                <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                  {sesVehicules.map(v=>{
+                    const on=plateKey(v.plate)===plateKey(f.plate);
+                    return (
+                      <button key={v.id} type="button" onClick={()=>prendVehicule(v)}
+                        style={{ textAlign:"left", padding:"8px 12px", borderRadius:8, cursor:"pointer", fontFamily:"inherit",
+                          background:on?"#dbeafe":"#f8fafc", border:"1px solid "+(on?"#3b82f6":C.bdr), color:C.txt }}>
+                        <span style={{ display:"block", fontSize:13, fontWeight:700, letterSpacing:.4 }}>{plateFmt(v.plate)}</span>
+                        <span style={{ display:"block", fontSize:11, color:C.mut }}>{[v.brand,v.model].filter(Boolean).join(" ")||"—"}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <p style={{ color:C.mut, fontSize:11, margin:"6px 0 0" }}>Un clic reprend l'immatriculation, la marque, le modèle, le VIN et la date de 1ère MEC.</p>
+              </div>
+            )}
           </div>
         ) : (
           <div>
@@ -1156,7 +1212,8 @@ function VhModal({ init, plate, user, onSave, onClose }) {
   );
 }
 
-function VehiclesView({ orders, documents, vehicleHistory, user, nav, selOrd, openDoc, addVh, editVh, removeVh, notify }) {
+function VehiclesView({ orders, documents, vehicleHistory, clients, cVehicles, user, nav, selOrd, openDoc, addVh, editVh, removeVh, notify }) {
+  const proprio=(plaque)=>{ const v=vehicleOwner(cVehicles,plaque); return v&&(clients||[]).find(c=>c.id===v.clientId); };
   const [q,sq]=useState(""); const [sel,ssel]=useState(null); const [modal,smodal]=useState(null);
   const isStaff=user.role!=="eleve";
   const vehicles=buildVehicles(orders,documents,vehicleHistory);
@@ -1196,6 +1253,7 @@ function VehiclesView({ orders, documents, vehicleHistory, user, nav, selOrd, op
               <h2 style={{color:C.txt,fontSize:22,fontWeight:700,margin:0,letterSpacing:.5}}>🚙 {v.plate}</h2>
               <div style={{color:C.sub,fontSize:14,marginTop:4}}>{[v.brand,v.model,v.year&&"("+v.year+")"].filter(Boolean).join(" ")||"Véhicule non identifié"}</div>
               {v.vin&&<div style={{color:C.mut,fontSize:12,marginTop:2,fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace"}}>VIN {v.vin}</div>}
+              {proprio(v.plate)&&<div style={{color:"#1d4ed8",fontSize:12,marginTop:2,fontWeight:600}}>🧑‍🔧 {proprio(v.plate).name}</div>}
               {v.client&&<div style={{color:C.mut,fontSize:12,marginTop:2}}>{v.client}</div>}
             </div>
             {isStaff&&<Btn sm onClick={()=>smodal({plate:v.plate})}>➕ Ajouter une intervention</Btn>}
@@ -1772,7 +1830,8 @@ function TariffRow({ t, onSave, onDelete }) {
   );
 }
 
-function ClientRow({ c, orders, onSave, onDelete }) {
+function ClientRow({ c, orders, vehicles, onSave, onDelete, onAddVehicle, onDelVehicle }) {
+  const [nv,setNv]=useState({plate:"",brand:"",model:""});
   const snap=()=>({ name:c.name, phone:c.phone, email:c.email, notes:c.notes });
   const [f,sf]=useState(snap);
   useEffect(()=>{ sf(snap()); },[c.id,c.name,c.phone,c.email,c.notes]); // eslint-disable-line
@@ -1788,6 +1847,27 @@ function ClientRow({ c, orders, onSave, onDelete }) {
         <div style={{flex:"2 1 200px"}}><label style={{fontSize:11,color:C.mut}}>Adresse électronique</label>{fld("email","client@exemple.fr")}</div>
       </div>
       <div style={{marginBottom:8}}><label style={{fontSize:11,color:C.mut}}>Notes</label>{fld("notes","Remarques internes")}</div>
+      <div style={{borderTop:"1px dashed "+C.bdr,paddingTop:10,marginBottom:8}}>
+        <label style={{fontSize:11,color:C.mut,display:"block",marginBottom:6}}>🚗 Véhicules</label>
+        {(vehicles||[]).length===0
+          ? <p style={{fontSize:12,color:C.mut,margin:"0 0 8px"}}>Aucun véhicule rattaché.</p>
+          : <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:8}}>
+              {vehicles.map(v=>(
+                <span key={v.id} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"6px 10px",borderRadius:8,background:"#f1f5f9",border:"1px solid "+C.bdr}}>
+                  <span style={{fontSize:12}}><b style={{letterSpacing:.4}}>{plateFmt(v.plate)}</b>
+                    {[v.brand,v.model].filter(Boolean).length?<span style={{color:C.mut}}> · {[v.brand,v.model].filter(Boolean).join(" ")}</span>:null}</span>
+                  <button onClick={()=>onDelVehicle(v)} title="Détacher ce véhicule"
+                    style={{background:"none",border:"none",color:C.mut,cursor:"pointer",fontSize:15,padding:0,lineHeight:1}}>×</button>
+                </span>
+              ))}
+            </div>}
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"flex-end"}}>
+          <input value={nv.plate} onChange={e=>setNv(p=>({...p,plate:e.target.value.toUpperCase()}))} placeholder="AB-123-CD" style={{...TI,flex:"1 1 120px"}}/>
+          <input value={nv.brand} onChange={e=>setNv(p=>({...p,brand:e.target.value}))} placeholder="Marque" style={{...TI,flex:"1 1 110px"}}/>
+          <input value={nv.model} onChange={e=>setNv(p=>({...p,model:e.target.value}))} placeholder="Modèle" style={{...TI,flex:"1 1 110px"}}/>
+          <Btn sm ghost onClick={()=>{ if(!plateKey(nv.plate)){alert("Immatriculation requise.");return;} onAddVehicle(c,nv); setNv({plate:"",brand:"",model:""}); }}>+ Rattacher</Btn>
+        </div>
+      </div>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,flexWrap:"wrap"}}>
         <span style={{fontSize:12,color:C.mut}}>{nb>0?nb+" ordre"+(nb>1?"s":"")+" à son nom":"Aucun ordre enregistré"}</span>
         <Btn sm ghost danger onClick={()=>onDelete(c)}>🗑 Supprimer</Btn>
@@ -1796,7 +1876,7 @@ function ClientRow({ c, orders, onSave, onDelete }) {
   );
 }
 
-function AdminPanel({ students, staff, orders, tariffs, reloadTariffs, clients, reloadClients, isAdmin, notify, reloadStudents, reloadStaff, currentId }) {
+function AdminPanel({ students, staff, orders, tariffs, reloadTariffs, clients, reloadClients, cVehicles, reloadCVehicles, isAdmin, notify, reloadStudents, reloadStaff, currentId }) {
   const [tab,st]=useState("students");
   const [nu,snu]=useState({name:"",group:CLASSES[0],password:""});
   const [busy,sbusy]=useState(false);
@@ -1856,6 +1936,21 @@ function AdminPanel({ students, staff, orders, tariffs, reloadTariffs, clients, 
   const delClient=async(c)=>{
     if(!window.confirm("Supprimer la fiche de « "+c.name+" » ?\nLes ordres et documents déjà établis ne sont pas modifiés."))return;
     try{ await deleteClient(c.id); reloadClients(); notify("Fiche client supprimée"); }
+    catch(e){ console.error(e); notify("Erreur : "+(e.message||e),"error"); }
+  };
+  const addVehicle=async(c,v)=>{
+    const prop=vehicleOwner(cVehicles,v.plate);
+    if(prop&&prop.clientId!==c.id){
+      const autre=(clients||[]).find(x=>x.id===prop.clientId);
+      if(!window.confirm("Cette immatriculation est rattachée à « "+(autre?autre.name:"un autre client")+" ».\nLa transférer à « "+c.name+" » ?"))return;
+    }
+    try{ await rememberVehicle({clientId:c.id,plate:v.plate.trim(),brand:v.brand,model:v.model},cVehicles);
+      reloadCVehicles(); notify("Véhicule rattaché à "+c.name); }
+    catch(e){ console.error(e); notify("Erreur : "+(e.message||e),"error"); }
+  };
+  const delVehicle=async(v)=>{
+    if(!window.confirm("Détacher le véhicule "+plateFmt(v.plate)+" de ce client ?\nSon historique d'entretien n'est pas modifié."))return;
+    try{ await deleteClientVehicle(v.id); reloadCVehicles(); notify("Véhicule détaché"); }
     catch(e){ console.error(e); notify("Erreur : "+(e.message||e),"error"); }
   };
   const addClient=async()=>{
@@ -2016,7 +2111,9 @@ function AdminPanel({ students, staff, orders, tariffs, reloadTariffs, clients, 
             {shown.length===0
               ? <Crd><p style={{color:C.mut,fontSize:13,margin:0}}>{(clients||[]).length===0?"Aucun client enregistré pour le moment.":"Aucun client ne correspond à cette recherche."}</p></Crd>
               : <div style={{display:"flex",flexDirection:"column",gap:10}}>
-                  {shown.map(c=><ClientRow key={c.id} c={c} orders={orders} onSave={patch=>saveClient(c,patch)} onDelete={delClient}/>)}
+                  {shown.map(c=><ClientRow key={c.id} c={c} orders={orders} vehicles={clientVehicles(cVehicles,c.id)}
+                      onSave={patch=>saveClient(c,patch)} onDelete={delClient}
+                      onAddVehicle={addVehicle} onDelVehicle={delVehicle}/>)}
                 </div>}
           </div>
         );
@@ -2387,6 +2484,7 @@ export default function DMSApp() {
   const { tariffs, reloadTariffs } = useTariffs(cu?.id);
   const { vehicleHistory, addVh, editVh, removeVh } = useVehicleHistory(cu?.id);
   const { clients, reloadClients } = useClients(cu?.id);
+  const { clientVehicles: cVehicles, reloadClientVehicles } = useClientVehicles(cu?.id);
   const [staff,setStaff]=useState([]);
   const [page,sp]=useState("dashboard");
   const [selId,ssi]=useState(null); const [sideOpen,sso]=useState(false);
@@ -2408,15 +2506,15 @@ export default function DMSApp() {
   const renderPage=()=>{
     if(page==="dashboard")    return<Dashboard orders={orders} nav={nav} selOrd={ssi}/>;
     if(page==="orders")       return<OrdersList orders={orders} nav={nav} selOrd={ssi}/>;
-    if(page==="vehicles")     return <VehiclesView orders={orders} documents={documents} vehicleHistory={vehicleHistory} user={cu} nav={nav} selOrd={ssi} openDoc={openDoc} addVh={addVh} editVh={editVh} removeVh={removeVh} notify={notify}/>;
-    if(page==="new-order")    return <NewOrderForm addOrder={addOrder} teachers={staff} students={students} clients={clients} reloadClients={reloadClients} user={cu} nav={nav} selOrd={ssi} notify={notify}/>;
+    if(page==="vehicles")     return <VehiclesView orders={orders} documents={documents} vehicleHistory={vehicleHistory} clients={clients} cVehicles={cVehicles} user={cu} nav={nav} selOrd={ssi} openDoc={openDoc} addVh={addVh} editVh={editVh} removeVh={removeVh} notify={notify}/>;
+    if(page==="new-order")    return <NewOrderForm addOrder={addOrder} teachers={staff} students={students} clients={clients} reloadClients={reloadClients} cVehicles={cVehicles} reloadCVehicles={reloadClientVehicles} user={cu} nav={nav} selOrd={ssi} notify={notify}/>;
     if(page==="order-detail") return selId?<OrderDetail orderId={selId} orders={orders} documents={documents} editOrder={editOrder} removeOrder={removeOrder} isAdmin={isAdmin} user={cu} nav={nav} notify={notify} students={students}/>:null;
     if(page==="estimates")    return <DocsList kind="estimate" documents={documents} openDoc={openDoc} newDoc={()=>newDoc("estimate")}/>;
     if(page==="invoices")     return <DocsList kind="invoice" documents={documents} openDoc={openDoc} newDoc={()=>newDoc("invoice")}/>;
     if(page==="doc-form")     return <DocForm kind={docKind} initial={selDoc?documents.find(d=>d.id===selDoc):null} orders={orders} documents={documents} tariffs={tariffs} clients={clients} reloadClients={reloadClients} addDocument={addDocument} editDocument={editDocument} removeDocument={removeDocument} isAdmin={isAdmin} user={cu} nav={nav} notify={notify}/>;
     if(page==="history")      return<HistoryView orders={orders} documents={documents} nav={nav} selOrd={ssi} openDoc={openDoc}/>;
     if(page==="account")      return isStaff?<AccountPanel user={cu} orders={orders} documents={documents} students={students} notify={notify}/>:null;
-    if(page==="admin")        return isStaff?<AdminPanel students={students} staff={staff} orders={orders} tariffs={tariffs} reloadTariffs={reloadTariffs} clients={clients} reloadClients={reloadClients} isAdmin={isAdmin} notify={notify} reloadStudents={reloadStudents} reloadStaff={reloadStaff} currentId={cu.id}/>:null;
+    if(page==="admin")        return isStaff?<AdminPanel students={students} staff={staff} orders={orders} tariffs={tariffs} reloadTariffs={reloadTariffs} clients={clients} reloadClients={reloadClients} cVehicles={cVehicles} reloadCVehicles={reloadClientVehicles} isAdmin={isAdmin} notify={notify} reloadStudents={reloadStudents} reloadStaff={reloadStaff} currentId={cu.id}/>:null;
     return null;
   };
   return (

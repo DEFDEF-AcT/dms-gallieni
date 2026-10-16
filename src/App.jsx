@@ -10,6 +10,7 @@ import {
   listTariffs, insertTariff, updateTariff, deleteTariff,
   listVehicleHistory, insertVehicleHistory, updateVehicleHistory, deleteVehicleHistory,
   sendDocsByMail,
+  listClients, insertClient, updateClient, deleteClient, rememberClient,
 } from "./data";
 
 // Montants / TVA
@@ -204,6 +205,11 @@ const mecTxt = (o) => mecOf(o) ? fD(mecOf(o)) : (o && o.year ? o.year : "");
 // Adresse du client ; les OR VE/VH antérieurs la portaient dans `ev`.
 const mailOf = (o) => (o && (o.clientEmail || (o.ev && o.ev.clientEmail))) || "";
 const isMail = (v) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(v || "").trim());
+// Client de la base portant ce nom (insensible à la casse et aux espaces).
+const findClient = (list, name) => {
+  const n = String(name || "").trim().toLowerCase();
+  return n ? (list || []).find(c => c.name.trim().toLowerCase() === n) : undefined;
+};
 
 // ── Données Supabase (remplace localStorage) ──
 // Collection générique : fetch initial + abonnement realtime (refetch sur
@@ -247,6 +253,10 @@ function useStudents(dep) {
 function useTariffs(dep) {
   const { items, reload } = useCollection(listTariffs, "tariffs", dep);
   return { tariffs: items, reloadTariffs: reload };
+}
+function useClients(dep) {
+  const { items, reload } = useCollection(listClients, "clients", dep);
+  return { clients: items, reloadClients: reload };
 }
 function useVehicleHistory(dep) {
   const { items, reload } = useCollection(listVehicleHistory, "vehicle_history", dep);
@@ -826,6 +836,28 @@ function OrdersList({ orders, nav, selOrd }) {
 }
 
 // Sélection d'élèves regroupés par classe : un menu déroulant par classe, cases à cocher.
+// Saisie d'un client avec proposition de la base : taper quelques lettres
+// suffit, et choisir un client connu remplit ses coordonnées.
+function ClientPicker({ clients, name, onPick, onName, label }) {
+  const connu = findClient(clients, name);
+  const id = "base-clients";
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
+      <label style={{ fontSize:12, color:C.sub, fontWeight:500, display:"flex", alignItems:"center", gap:8 }}>
+        {label || "Nom du client"}
+        {connu && <span style={{ fontSize:11, fontWeight:600, color:"#15803d" }}>✓ fiche client</span>}
+      </label>
+      <input list={id} value={name} placeholder="M. Dupont"
+        onChange={e => { const v = e.target.value; const c = findClient(clients, v); c ? onPick(c) : onName(v); }}
+        style={{ background:"#f1f5f9", border:"1px solid "+(connu?"#16a34a":C.bdr), borderRadius:6,
+                 padding:"8px 10px", color:C.txt, fontSize:13, outline:"none", fontFamily:"inherit" }}/>
+      <datalist id={id}>{(clients||[]).map(c => <option key={c.id} value={c.name}/>)}</datalist>
+      {(clients||[]).length>0 && !connu && name.trim() &&
+        <span style={{ fontSize:11, color:C.mut }}>Nouveau client — il sera ajouté à la base.</span>}
+    </div>
+  );
+}
+
 function StudentPicker({ students, selected, onToggle }) {
   const [open, setOpen] = useState({});
   const groups = {};
@@ -862,7 +894,7 @@ function StudentPicker({ students, selected, onToggle }) {
   );
 }
 
-function NewOrderForm({ addOrder, teachers, students, user, nav, selOrd, notify }) {
+function NewOrderForm({ addOrder, teachers, students, clients, reloadClients, user, nav, selOrd, notify }) {
   const [busy,sbusy] = useState(false);
   const [f,sf] = useState({
     plate:"", brand:"", model:"", firstReg:"", km:"", vin:"", vtype:"client",
@@ -898,6 +930,12 @@ function NewOrderForm({ addOrder, teachers, students, user, nav, selOrd, notify 
     sbusy(true);
     try {
       const created=await addOrder(o);
+      // La base clients s'enrichit au fil des ordres (staff uniquement : RLS).
+      if(f.vtype==="client"&&f.clientName.trim()&&user.role!=="eleve"){
+        await rememberClient({ name:f.clientName, phone:f.clientPhone, email:f.clientEmail,
+          address:f.ev?f.ev.clientAddress:"", createdBy:user.name }, clients);
+        reloadClients&&reloadClients();
+      }
       selOrd(created.id);nav("order-detail");notify((f.ev?"Ordre VE/VH ":"Ordre de réparation ")+created.orderNum+" créé");
       archiveToDrive(created, notify);   // archivage PDF sur le Drive (création)
     } catch(e){ console.error(e); notify("Erreur lors de la création : "+(e.message||e),"error"); }
@@ -952,7 +990,11 @@ function NewOrderForm({ addOrder, teachers, students, user, nav, selOrd, notify 
           <div>
             <SecTitle>👤 Client</SecTitle>
             <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))", gap:12 }}>
-              <Inp label="Nom du client" value={f.clientName} onChange={v=>set("clientName",v)} placeholder="M. Dupont"/>
+              <ClientPicker clients={clients} name={f.clientName}
+                onName={v=>set("clientName",v)}
+                onPick={c=>sf(p=>({...p, clientName:c.name,
+                  clientPhone:p.clientPhone||c.phone, clientEmail:p.clientEmail||c.email,
+                  ev:p.ev?{...p.ev, clientAddress:p.ev.clientAddress||c.address}:p.ev }))}/>
               <Inp label="Téléphone" value={f.clientPhone} onChange={v=>set("clientPhone",v)} placeholder="06 12 34 56 78"/>
               <Inp label="Adresse électronique" value={f.clientEmail} onChange={v=>set("clientEmail",v)} placeholder="client@exemple.fr" type="email"/>
               {isEv && <Inp label="Moyen de contact retenu" value={f.ev.clientContact} onChange={v=>setEv("clientContact",v)} placeholder="Téléphone, SMS, courriel…"/>}
@@ -1733,7 +1775,32 @@ function TariffRow({ t, onSave, onDelete }) {
   );
 }
 
-function AdminPanel({ students, staff, orders, tariffs, reloadTariffs, isAdmin, notify, reloadStudents, reloadStaff, currentId }) {
+function ClientRow({ c, orders, onSave, onDelete }) {
+  const snap=()=>({ name:c.name, phone:c.phone, email:c.email, address:c.address, notes:c.notes });
+  const [f,sf]=useState(snap);
+  useEffect(()=>{ sf(snap()); },[c.id,c.name,c.phone,c.email,c.address,c.notes]); // eslint-disable-line
+  const set=(k,v)=>sf(p=>({...p,[k]:v}));
+  const blur=(k)=>{ const v=(f[k]||"").trim(); if(v!==(c[k]||"")) onSave({[k]:v}); };
+  const fld=(k,ph)=>(<input value={f[k]} onChange={e=>set(k,e.target.value)} onBlur={()=>blur(k)} placeholder={ph} style={TI}/>);
+  const nb=(orders||[]).filter(o=>o.vtype==="client"&&(o.clientName||"").trim().toLowerCase()===c.name.trim().toLowerCase()).length;
+  return (
+    <div style={{border:"1px solid "+C.bdr,borderRadius:10,padding:12,background:C.card}}>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:8}}>
+        <div style={{flex:"2 1 200px"}}><label style={{fontSize:11,color:C.mut}}>Nom</label>{fld("name","M. Dupont")}</div>
+        <div style={{flex:"1 1 150px"}}><label style={{fontSize:11,color:C.mut}}>Téléphone</label>{fld("phone","06 12 34 56 78")}</div>
+        <div style={{flex:"2 1 200px"}}><label style={{fontSize:11,color:C.mut}}>Adresse électronique</label>{fld("email","client@exemple.fr")}</div>
+      </div>
+      <div style={{marginBottom:8}}><label style={{fontSize:11,color:C.mut}}>Adresse</label>{fld("address","12 rue des Ateliers, 31000 Toulouse")}</div>
+      <div style={{marginBottom:8}}><label style={{fontSize:11,color:C.mut}}>Notes</label>{fld("notes","Remarques internes")}</div>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,flexWrap:"wrap"}}>
+        <span style={{fontSize:12,color:C.mut}}>{nb>0?nb+" ordre"+(nb>1?"s":"")+" à son nom":"Aucun ordre enregistré"}</span>
+        <Btn sm ghost danger onClick={()=>onDelete(c)}>🗑 Supprimer</Btn>
+      </div>
+    </div>
+  );
+}
+
+function AdminPanel({ students, staff, orders, tariffs, reloadTariffs, clients, reloadClients, isAdmin, notify, reloadStudents, reloadStaff, currentId }) {
   const [tab,st]=useState("students");
   const [nu,snu]=useState({name:"",group:CLASSES[0],password:""});
   const [busy,sbusy]=useState(false);
@@ -1784,6 +1851,23 @@ function AdminPanel({ students, staff, orders, tariffs, reloadTariffs, isAdmin, 
     }catch(e){ console.error(e); notify("Erreur : "+(e.message||e),"error"); }
   };
   const [newGrp,setNewGrp]=useState("");
+  // ── Base clients (enseignants et administrateurs) ──
+  const [cq,setCq]=useState(""); const [nc,setNc]=useState({name:"",phone:"",email:""});
+  const saveClient=async(c,patch)=>{
+    try{ await updateClient(c.id,patch); reloadClients(); }
+    catch(e){ console.error(e); notify("Erreur : "+(e.message||e),"error"); }
+  };
+  const delClient=async(c)=>{
+    if(!window.confirm("Supprimer la fiche de « "+c.name+" » ?\nLes ordres et documents déjà établis ne sont pas modifiés."))return;
+    try{ await deleteClient(c.id); reloadClients(); notify("Fiche client supprimée"); }
+    catch(e){ console.error(e); notify("Erreur : "+(e.message||e),"error"); }
+  };
+  const addClient=async()=>{
+    if(!nc.name.trim()){notify("Le nom du client est obligatoire","error");return;}
+    if(findClient(clients,nc.name)){notify("Un client porte déjà ce nom","error");return;}
+    try{ await insertClient({...nc,name:nc.name.trim()}); setNc({name:"",phone:"",email:""}); reloadClients(); notify("Client ajouté"); }
+    catch(e){ console.error(e); notify("Erreur : "+(e.message||e),"error"); }
+  };
   const stats=[
     {l:"Total interventions",v:orders.length,c:"#2563eb"},{l:"En attente",v:orders.filter(o=>o.status==="en_attente").length,c:"#f59e0b"},
     {l:"En cours",v:orders.filter(o=>o.status==="en_cours").length,c:"#3b82f6"},{l:"Terminées",v:orders.filter(o=>o.status==="termine").length,c:"#059669"},
@@ -1822,7 +1906,7 @@ function AdminPanel({ students, staff, orders, tariffs, reloadTariffs, isAdmin, 
         <Btn sm onClick={()=>csvExport(toCSV(orders),"DMS_Export_"+today()+".csv")} style={{background:"#065f46"}}>⬇ Export complet</Btn>
       </div>
       <div style={{display:"flex",gap:8,marginBottom:16}}>
-        {[["students","🎓 Élèves"],["staff","👤 Personnel"],...(isAdmin?[["tariffs","💶 Tarifs"]]:[]),["stats","📊 Statistiques"]].map(([id,l])=>(
+        {[["students","🎓 Élèves"],["staff","👤 Personnel"],["clients","🧑‍🔧 Clients"],...(isAdmin?[["tariffs","💶 Tarifs"]]:[]),["stats","📊 Statistiques"]].map(([id,l])=>(
           <button key={id} onClick={()=>st(id)} style={{padding:"8px 16px",borderRadius:6,cursor:"pointer",fontSize:13,border:"1px solid "+(tab===id?"#2563eb":C.bdr),background:tab===id?C.acc:"transparent",color:tab===id?"#fff":C.sub}}>{l}</button>
         ))}
       </div>
@@ -1906,6 +1990,41 @@ function AdminPanel({ students, staff, orders, tariffs, reloadTariffs, isAdmin, 
           );})}
         </div>
       )}
+      {tab==="clients"&&(()=>{
+        const q=cq.trim().toLowerCase();
+        const shown=(clients||[]).filter(c=>!q||[c.name,c.phone,c.email,c.address].join(" ").toLowerCase().includes(q));
+        return (
+          <div style={{display:"flex",flexDirection:"column",gap:14}}>
+            <Crd>
+              <h3 style={{color:"#2563eb",fontSize:15,fontWeight:700,margin:"0 0 6px"}}>🧑‍🔧 Base clients</h3>
+              <p style={{color:C.sub,fontSize:13,margin:0}}>
+                Ces fiches sont proposées à la saisie d'un <b>ordre de réparation</b> et d'un <b>devis / facture</b> :
+                choisir un client remplit ses coordonnées. La base s'enrichit toute seule — un nouveau nom saisi par
+                un enseignant y est ajouté. Les modifications sont enregistrées dès que vous quittez un champ.
+              </p>
+            </Crd>
+            <Crd>
+              <h4 style={{margin:"0 0 10px",fontSize:14,fontWeight:700,color:C.txt}}>Ajouter un client</h4>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"flex-end"}}>
+                <div style={{flex:"2 1 180px"}}><label style={{fontSize:11,color:C.mut}}>Nom *</label>
+                  <input value={nc.name} onChange={e=>setNc(p=>({...p,name:e.target.value}))} placeholder="M. Dupont" style={TI}/></div>
+                <div style={{flex:"1 1 140px"}}><label style={{fontSize:11,color:C.mut}}>Téléphone</label>
+                  <input value={nc.phone} onChange={e=>setNc(p=>({...p,phone:e.target.value}))} placeholder="06 12 34 56 78" style={TI}/></div>
+                <div style={{flex:"2 1 180px"}}><label style={{fontSize:11,color:C.mut}}>Adresse électronique</label>
+                  <input value={nc.email} onChange={e=>setNc(p=>({...p,email:e.target.value}))} placeholder="client@exemple.fr" style={TI}/></div>
+                <Btn sm onClick={addClient}>+ Ajouter</Btn>
+              </div>
+            </Crd>
+            <input value={cq} onChange={e=>setCq(e.target.value)} placeholder="🔍 Rechercher un client…"
+              style={{background:C.card,border:"1px solid "+C.bdr,borderRadius:8,padding:"10px 14px",color:C.txt,fontSize:13,outline:"none"}}/>
+            {shown.length===0
+              ? <Crd><p style={{color:C.mut,fontSize:13,margin:0}}>{(clients||[]).length===0?"Aucun client enregistré pour le moment.":"Aucun client ne correspond à cette recherche."}</p></Crd>
+              : <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                  {shown.map(c=><ClientRow key={c.id} c={c} orders={orders} onSave={patch=>saveClient(c,patch)} onDelete={delClient}/>)}
+                </div>}
+          </div>
+        );
+      })()}
       {tab==="tariffs"&&isAdmin&&(
         <div style={{display:"flex",flexDirection:"column",gap:14}}>
           <datalist id="tarif-groupes">{tarifGroups(tariffs).map(g=><option key={g} value={g}/>)}</datalist>
@@ -1996,7 +2115,7 @@ function DocsList({ kind, documents, openDoc, newDoc }) {
   );
 }
 
-function DocForm({ kind, initial, orders, documents, tariffs, addDocument, editDocument, removeDocument, isAdmin, user, nav, notify }) {
+function DocForm({ kind, initial, orders, documents, tariffs, clients, reloadClients, addDocument, editDocument, removeDocument, isAdmin, user, nav, notify }) {
   const label=DOC_LABEL[kind];
   const back=()=>nav(kind==="estimate"?"estimates":"invoices");
   const [d,sd]=useState(()=> initial ? {...initial} : { kind, orderId:"", clientName:"", clientPhone:"", plate:"", brand:"", model:"", year:"", km:"", vin:"", clientEmail:"", items:[], tvaRate:0, priceMode:"ttc", signature:"", notes:"", validUntil:"" });
@@ -2038,7 +2157,8 @@ function DocForm({ kind, initial, orders, documents, tariffs, addDocument, editD
       items:d.items.map(it=>({ref:(it.ref||"").trim(),label:it.label||"",qty:Number(it.qty)||0,unitPrice:Number(it.unitPrice)||0,unit:it.unit||""}))};
     sbusy(true);
     try{
-      if(isNew){ const created=await addDocument({...clean,createdBy:user.name}); sd(created); notify(label+" créée : "+created.docNum); archiveDocToDrive(created,notify); }
+      if(isNew){ const created=await addDocument({...clean,createdBy:user.name}); sd(created); notify(label+" créée : "+created.docNum); archiveDocToDrive(created,notify);
+        if(d.clientName.trim()&&user.role!=="eleve"){ await rememberClient({ name:d.clientName, phone:d.clientPhone, email:d.clientEmail, createdBy:user.name }, clients); reloadClients&&reloadClients(); } }
       else { const upd=await editDocument(d.id,clean); sd(upd); notify(label+" enregistrée"); }
     }catch(e){ console.error(e); notify("Erreur : "+(e.message||e),"error"); }
     finally{ sbusy(false); }
@@ -2076,7 +2196,9 @@ function DocForm({ kind, initial, orders, documents, tariffs, addDocument, editD
         <Sel label="Ordre" value={d.orderId} onChange={linkOrder} opts={[{v:"",l:"— Aucun (saisie libre) —"},...orders.map(o=>({v:o.id,l:o.orderNum+" · "+(o.clientName||o.plate||"")}))]}/>
         <SecTitle>👤 Client</SecTitle>
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:12}}>
-          <Inp label="Nom du client *" value={d.clientName} onChange={v=>set("clientName",v)} placeholder="M. Dupont"/>
+          <ClientPicker clients={clients} name={d.clientName} label="Nom du client *"
+            onName={v=>set("clientName",v)}
+            onPick={c=>sd(p=>({...p, clientName:c.name, clientPhone:p.clientPhone||c.phone, clientEmail:p.clientEmail||c.email }))}/>
           <Inp label="Téléphone" value={d.clientPhone} onChange={v=>set("clientPhone",v)} placeholder="06 12 34 56 78"/>
           <Inp label="Adresse électronique" value={d.clientEmail||""} onChange={v=>set("clientEmail",v)} placeholder="client@exemple.fr" type="email"/>
         </div>
@@ -2268,6 +2390,7 @@ export default function DMSApp() {
   const { documents, addDocument, editDocument, removeDocument } = useDocuments(cu?.id);
   const { tariffs, reloadTariffs } = useTariffs(cu?.id);
   const { vehicleHistory, addVh, editVh, removeVh } = useVehicleHistory(cu?.id);
+  const { clients, reloadClients } = useClients(cu?.id);
   const [staff,setStaff]=useState([]);
   const [page,sp]=useState("dashboard");
   const [selId,ssi]=useState(null); const [sideOpen,sso]=useState(false);
@@ -2290,14 +2413,14 @@ export default function DMSApp() {
     if(page==="dashboard")    return<Dashboard orders={orders} nav={nav} selOrd={ssi}/>;
     if(page==="orders")       return<OrdersList orders={orders} nav={nav} selOrd={ssi}/>;
     if(page==="vehicles")     return <VehiclesView orders={orders} documents={documents} vehicleHistory={vehicleHistory} user={cu} nav={nav} selOrd={ssi} openDoc={openDoc} addVh={addVh} editVh={editVh} removeVh={removeVh} notify={notify}/>;
-    if(page==="new-order")    return <NewOrderForm addOrder={addOrder} teachers={staff} students={students} user={cu} nav={nav} selOrd={ssi} notify={notify}/>;
+    if(page==="new-order")    return <NewOrderForm addOrder={addOrder} teachers={staff} students={students} clients={clients} reloadClients={reloadClients} user={cu} nav={nav} selOrd={ssi} notify={notify}/>;
     if(page==="order-detail") return selId?<OrderDetail orderId={selId} orders={orders} documents={documents} editOrder={editOrder} removeOrder={removeOrder} isAdmin={isAdmin} user={cu} nav={nav} notify={notify} students={students}/>:null;
     if(page==="estimates")    return <DocsList kind="estimate" documents={documents} openDoc={openDoc} newDoc={()=>newDoc("estimate")}/>;
     if(page==="invoices")     return <DocsList kind="invoice" documents={documents} openDoc={openDoc} newDoc={()=>newDoc("invoice")}/>;
-    if(page==="doc-form")     return <DocForm kind={docKind} initial={selDoc?documents.find(d=>d.id===selDoc):null} orders={orders} documents={documents} tariffs={tariffs} addDocument={addDocument} editDocument={editDocument} removeDocument={removeDocument} isAdmin={isAdmin} user={cu} nav={nav} notify={notify}/>;
+    if(page==="doc-form")     return <DocForm kind={docKind} initial={selDoc?documents.find(d=>d.id===selDoc):null} orders={orders} documents={documents} tariffs={tariffs} clients={clients} reloadClients={reloadClients} addDocument={addDocument} editDocument={editDocument} removeDocument={removeDocument} isAdmin={isAdmin} user={cu} nav={nav} notify={notify}/>;
     if(page==="history")      return<HistoryView orders={orders} documents={documents} nav={nav} selOrd={ssi} openDoc={openDoc}/>;
     if(page==="account")      return isStaff?<AccountPanel user={cu} orders={orders} documents={documents} students={students} notify={notify}/>:null;
-    if(page==="admin")        return isStaff?<AdminPanel students={students} staff={staff} orders={orders} tariffs={tariffs} reloadTariffs={reloadTariffs} isAdmin={isAdmin} notify={notify} reloadStudents={reloadStudents} reloadStaff={reloadStaff} currentId={cu.id}/>:null;
+    if(page==="admin")        return isStaff?<AdminPanel students={students} staff={staff} orders={orders} tariffs={tariffs} reloadTariffs={reloadTariffs} clients={clients} reloadClients={reloadClients} isAdmin={isAdmin} notify={notify} reloadStudents={reloadStudents} reloadStaff={reloadStaff} currentId={cu.id}/>:null;
     return null;
   };
   return (

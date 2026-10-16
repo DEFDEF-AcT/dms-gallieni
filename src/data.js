@@ -124,6 +124,59 @@ export async function deleteDocument(id) {
   if (error) throw error;
 }
 
+// ── Base clients ────────────────────────────────────────────────────────────
+// Lecture : tous ; écriture : enseignants et administrateurs (RLS).
+export function rowToClient(r) {
+  return {
+    id: r.id, name: r.name || "", phone: r.phone || "", email: r.email || "",
+    address: r.address || "", notes: r.notes || "", createdBy: r.created_by || "",
+  };
+}
+function clientToRow(c) {
+  const row = {};
+  for (const k of ["name", "phone", "email", "address", "notes", "createdBy"])
+    if (k in c) row[camelToSnake(k)] = (c[k] ?? "").trim ? (c[k] ?? "").trim() : c[k];
+  return row;
+}
+export async function listClients() {
+  const { data, error } = await supabase.from("clients").select("*").order("name");
+  if (error) throw error;
+  return data.map(rowToClient);
+}
+export async function insertClient(c) {
+  const { data, error } = await supabase.from("clients").insert(clientToRow(c)).select().single();
+  if (error) throw error;
+  return rowToClient(data);
+}
+export async function updateClient(id, patch) {
+  const { data, error } = await supabase.from("clients").update(clientToRow(patch)).eq("id", id).select().single();
+  if (error) throw error;
+  return rowToClient(data);
+}
+export async function deleteClient(id) {
+  const { error } = await supabase.from("clients").delete().eq("id", id);
+  if (error) throw error;
+}
+// Enregistre le client s'il est nouveau, complète ses coordonnées s'il existe
+// déjà mais qu'elles manquent. Silencieux en cas d'échec : ne doit jamais
+// empêcher la création de l'ordre.
+export async function rememberClient({ name, phone, email, address, createdBy }, known) {
+  const n = (name || "").trim();
+  if (!n) return null;
+  try {
+    const existing = (known || []).find((c) => c.name.toLowerCase() === n.toLowerCase());
+    if (!existing) return await insertClient({ name: n, phone, email, address, createdBy });
+    const patch = {};
+    if (phone && !existing.phone) patch.phone = phone;
+    if (email && !existing.email) patch.email = email;
+    if (address && !existing.address) patch.address = address;
+    return Object.keys(patch).length ? await updateClient(existing.id, patch) : existing;
+  } catch (e) {
+    console.warn("[DMS] base clients non mise à jour", e?.message || e);
+    return null;
+  }
+}
+
 // ── Historique d'entretien des véhicules ────────────────────────────────────
 // Lecture : tous ; écriture : enseignants et administrateurs (RLS).
 export function rowToVh(r) {

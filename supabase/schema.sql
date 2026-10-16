@@ -291,6 +291,8 @@ alter publication supabase_realtime add table documents;
 -- ----------------------------------------------------------------------------
 -- MIGRATION (bases déjà en service) : traçabilité VE/VH
 --   alter table orders add column if not exists ev jsonb;
+-- MIGRATION : créer la table clients ci-dessous, puis reprendre les clients
+--   déjà saisis dans les ordres (1 fiche par nom, coordonnées les plus récentes).
 -- MIGRATION : adresse électronique du client
 --   alter table orders    add column if not exists client_email text default '';
 --   alter table documents add column if not exists client_email text default '';
@@ -406,6 +408,39 @@ create policy upd_vehicle_history  on vehicle_history for update using (is_staff
 create policy del_vehicle_history  on vehicle_history for delete using (is_staff());
 
 alter publication supabase_realtime add table vehicle_history;
+
+-- ============================================================================
+-- BASE CLIENTS — proposée à la saisie d'un OR et d'un devis / facture.
+-- Lecture : tout utilisateur connecté. Écriture : enseignants et administrateurs.
+-- ============================================================================
+create table if not exists clients (
+  id         uuid primary key default gen_random_uuid(),
+  name       text not null,
+  phone      text default '',
+  email      text default '',
+  address    text default '',
+  notes      text default '',
+  created_by text default '',
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+create unique index if not exists clients_name_uniq on clients (lower(name));
+
+drop trigger if exists trg_clients_touch on clients;
+create trigger trg_clients_touch before update on clients
+  for each row execute function touch_updated_at();
+
+alter table clients enable row level security;
+drop policy if exists read_clients on clients;
+drop policy if exists ins_clients  on clients;
+drop policy if exists upd_clients  on clients;
+drop policy if exists del_clients  on clients;
+create policy read_clients on clients for select using (auth.role() = 'authenticated');
+create policy ins_clients  on clients for insert with check (is_staff());
+create policy upd_clients  on clients for update using (is_staff());
+create policy del_clients  on clients for delete using (is_staff());
+
+alter publication supabase_realtime add table clients;
 
 -- ============================================================================
 -- APRÈS EXÉCUTION :

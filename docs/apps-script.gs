@@ -49,12 +49,19 @@ function folderFor(name) {
   return it.hasNext() ? it.next() : root.createFolder(name);
 }
 
-/** action "archive" — comportement inchangé. */
+/** action "archive" — remplace le PDF de même nom au lieu d'empiler les copies. */
 function archive(p) {
   if (!p.html || !p.orderNum) return out({ ok: false, error: 'html et orderNum requis' });
   const folder = folderFor(p.folder || 'Client sans nom');
-  const file = folder.createFile(toPdf(p.html, p.orderNum));
-  return out({ ok: true, id: file.getId(), url: file.getUrl(), folder: folder.getName() });
+  const blob = toPdf(p.html, p.orderNum);
+
+  // Un ré-archivage du même ordre écrase la version précédente.
+  var remplaces = 0;
+  const anciens = folder.getFilesByName(blob.getName());
+  while (anciens.hasNext()) { anciens.next().setTrashed(true); remplaces++; }
+
+  const file = folder.createFile(blob);
+  return out({ ok: true, id: file.getId(), url: file.getUrl(), folder: folder.getName(), replaced: remplaces });
 }
 
 /** action "mail" — un courriel, un PDF par document. */

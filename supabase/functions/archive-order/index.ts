@@ -1,4 +1,6 @@
-// Edge Function : passerelle d'archivage d'un ordre de réparation sur Google Drive.
+// Edge Function : passerelle vers le script Google (Apps Script).
+//   action "archive" (défaut) : archive un document en PDF sur le Drive.
+//   action "mail"             : envoie un ou plusieurs documents en PDF par courriel.
 // Le frontend ne connaît jamais l'URL ni le secret du script Google : c'est cette
 // fonction (côté serveur) qui les détient et relaie l'envoi (ce qui règle aussi le CORS).
 //
@@ -32,16 +34,42 @@ Deno.serve(async (req) => {
     if (!user) return json({ ok: false, error: "Non authentifié" });
     const admin = createClient(url, serviceKey);
     const { data: prof } = await admin.from("profiles").select("role").eq("id", user.id).single();
-    if (!prof || !["admin", "enseignant"].includes(prof.role)) return json({ ok: false, error: "Réservé au staff" });
+    if (!prof || !["admin", "enseignant"].includes(prof.role))
+      return json({ ok: false, error: "Réservé aux enseignants et aux administrateurs" });
 
-    const { html, folder, orderNum } = await req.json();
-    if (!html || !orderNum) return json({ ok: false, error: "html et orderNum requis" });
+    const body = await req.json();
+    const action = body.action === "mail" ? "mail" : "archive";
 
-    // Relai vers le script Google (qui convertit en PDF et classe par dossier).
+    let payload: Record<string, unknown>;
+    if (action === "mail") {
+      const to = String(body.to ?? "").trim();
+      const docs = Array.isArray(body.docs) ? body.docs : [];
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) return json({ ok: false, error: "Adresse électronique invalide" });
+      if (docs.length === 0) return json({ ok: false, error: "Aucun document à envoyer" });
+      if (docs.length > 6) return json({ ok: false, error: "6 documents au maximum par envoi" });
+      for (const d of docs) {
+        if (!d || typeof d.html !== "string" || !d.html) return json({ ok: false, error: "Document vide" });
+      }
+      payload = {
+        secret: scriptSecret, action: "mail", to,
+        subject: String(body.subject ?? "").slice(0, 200) || "Lycée Gallieni – Atelier BTS MV",
+        body: String(body.body ?? "").slice(0, 5000),
+        from: prof.role === "admin" || prof.role === "enseignant" ? String(body.from ?? "") : "",
+        docs: docs.map((d: { html: string; name?: string }) => ({
+          html: d.html, name: String(d.name ?? "document").replace(/[^\w.-]+/g, "_").slice(0, 80),
+        })),
+      };
+    } else {
+      const { html, folder, orderNum } = body;
+      if (!html || !orderNum) return json({ ok: false, error: "html et orderNum requis" });
+      payload = { secret: scriptSecret, action: "archive", html, folder: folder || "Client sans nom", orderNum };
+    }
+
+    // Relai vers le script Google (conversion PDF, classement Drive, envoi).
     const r = await fetch(scriptUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ secret: scriptSecret, html, folder: folder || "Client sans nom", orderNum }),
+      body: JSON.stringify(payload),
       redirect: "follow",
     });
     const txt = await r.text();

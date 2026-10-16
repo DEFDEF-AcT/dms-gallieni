@@ -9,6 +9,7 @@ import {
   countInspectionsBy,
   listTariffs, insertTariff, updateTariff, deleteTariff,
   listVehicleHistory, insertVehicleHistory, updateVehicleHistory, deleteVehicleHistory,
+  sendDocsByMail,
 } from "./data";
 
 // Montants / TVA
@@ -183,7 +184,7 @@ const EV_STEPS = [
 const evStep0 = () => ({ name:"", date:"", time:"", visa:"" });
 const EV0 = () => ({
   energy:"",
-  clientAddress:"", clientEmail:"", clientContact:"",
+  clientAddress:"", clientContact:"",
   opType:"non_elec", quoteAmount:"", returnDate:"", returnTime:"",
   steps: EV_STEPS.reduce((a, st) => { a[st.id] = evStep0(); return a; }, {}),
 });
@@ -200,6 +201,9 @@ const vinOf = (o) => (o && (o.vin || (o.ev && o.ev.vin))) || "";
 const mecOf = (o) => (o && (o.firstReg || (o.ev && o.ev.firstReg))) || "";
 // Affichage : la date complète si on l'a, sinon l'année seule des anciens OR.
 const mecTxt = (o) => mecOf(o) ? fD(mecOf(o)) : (o && o.year ? o.year : "");
+// Adresse du client ; les OR VE/VH antérieurs la portaient dans `ev`.
+const mailOf = (o) => (o && (o.clientEmail || (o.ev && o.ev.clientEmail))) || "";
+const isMail = (v) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(v || "").trim());
 
 // ── Données Supabase (remplace localStorage) ──
 // Collection générique : fetch initial + abonnement realtime (refetch sur
@@ -381,12 +385,12 @@ function orderHTML(order) {
       <div class="grid g2">
         <div><div class="lb">Nom du client</div><div class="vl">${esc(order.clientName||"—")}</div></div>
         <div><div class="lb">Téléphone</div><div class="vl">${esc(order.clientPhone||"—")}</div></div>
-      </div>${ev?`
-      <div class="grid g3" style="margin-top:6px;">
+      </div>
+      <div class="grid ${ev?"g3":"g2"}" style="margin-top:6px;">
+        <div><div class="lb">Adresse électronique</div><div class="vl">${esc(mailOf(order)||"—")}</div></div>${ev?`
         <div><div class="lb">Adresse</div><div class="vl">${esc(ev.clientAddress||"—")}</div></div>
-        <div><div class="lb">Adresse électronique</div><div class="vl">${esc(ev.clientEmail||"—")}</div></div>
-        <div><div class="lb">Moyen de contact retenu</div><div class="vl">${esc(ev.clientContact||"—")}</div></div>
-      </div>`:""}
+        <div><div class="lb">Moyen de contact retenu</div><div class="vl">${esc(ev.clientContact||"—")}</div></div>`:""}
+      </div>
     </div>`;
   const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(order.orderNum)}</title>
 <style>*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#111;background:#fff;}.page{padding:12mm 15mm;max-width:210mm;margin:0 auto;}.hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #1d4ed8;padding-bottom:10px;margin-bottom:14px;}.bn{font-size:20px;font-weight:bold;color:#1d4ed8;}.bs{font-size:10px;color:#555;margin-top:2px;}.on{font-size:22px;font-weight:bold;color:#1d4ed8;text-align:right;}.om{font-size:10px;color:#555;text-align:right;margin-top:2px;}.sec{margin-bottom:10px;}.sh{background:#1d4ed8;color:#fff;padding:4px 10px;font-size:11px;font-weight:bold;margin-bottom:6px;}.grid{display:grid;gap:6px 10px;}.g2{grid-template-columns:1fr 1fr;}.g3{grid-template-columns:1fr 1fr 1fr;}.g5{grid-template-columns:repeat(5,1fr);}.lb{font-size:9px;color:#888;text-transform:uppercase;letter-spacing:.4px;margin-bottom:2px;}.vl{font-size:12px;font-weight:bold;border-bottom:1px solid #ccc;padding-bottom:2px;min-height:17px;}.bdg{display:inline-block;padding:2px 10px;border-radius:20px;font-size:10px;font-weight:bold;}.tasks{display:grid;grid-template-columns:1fr 1fr;gap:0;}.ti{display:flex;align-items:center;gap:6px;padding:4px 5px;border-bottom:1px dotted #e5e5e5;font-size:11px;}.ti.odd{background:#f9f9f9;}.cb{width:13px;height:13px;border:1.5px solid #555;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;font-size:10px;font-weight:bold;}.ck{border-color:#059669;background:#d1fae5;color:#059669;}.td{color:#059669;font-weight:bold;}.tby{margin-left:auto;font-size:9px;color:#888;white-space:nowrap;}.tb{border:1px solid #ddd;padding:6px 8px;min-height:52px;font-size:11px;line-height:1.5;white-space:pre-wrap;}.sr{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:16px;padding-top:12px;border-top:2px solid #1d4ed8;}.sl{font-size:10px;color:#333;font-weight:bold;margin-bottom:5px;}.sb{border:1px solid #999;height:82px;display:flex;align-items:center;justify-content:center;background:#fafafa;overflow:hidden;}.sn{font-size:9px;color:#888;text-align:center;margin-top:3px;}.foot{margin-top:14px;padding-top:8px;border-top:1px solid #ddd;font-size:9px;color:#aaa;text-align:center;}.twocol{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;}.warn{border:1.5px solid #b91c1c;background:#fef2f2;color:#b91c1c;padding:6px 10px;font-size:10.5px;font-weight:bold;margin-bottom:10px;}table.opt,table.trc,table.wk{width:100%;border-collapse:collapse;font-size:10.5px;}table.opt th,table.trc th,table.wk th{background:#1d4ed8;color:#fff;padding:4px 6px;font-size:9.5px;text-align:left;border:1px solid #1d4ed8;}table.opt td,table.trc td,table.wk td{border:1px solid #ccc;padding:4px 6px;vertical-align:top;}table.opt{margin-bottom:6px;}table.opt th{text-align:center;}.oc{height:24px;text-align:center;font-size:15px;font-weight:bold;color:#111;}.oc.on{background:#dbeafe;color:#1d4ed8;}.trc .el{font-weight:bold;background:#f4f7ff;}.trc .vz{background:#fafafa;}td.c,th.c{text-align:center;}td.r,th.r{text-align:right;}.wk .ok{color:#059669;font-weight:bold;}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}.page{padding:8mm 12mm;}}</style>
@@ -465,7 +469,7 @@ function docHTML(doc) {
 <div class="hdr"><div><div class="bn">Lycée Gallieni</div><div class="bs">Atelier BTS Maintenance des Véhicules</div><div class="bs" style="font-weight:bold;margin-top:5px;font-size:13px;">${isEst?"DEVIS / ESTIMATION":"FACTURE"}</div></div>
 <div><div class="on">${esc(doc.docNum||"")}</div><div class="om">Date : ${fD(doc.createdAt||today())}</div>${dateLine}<div class="om">Établi par : ${esc(doc.createdBy||"—")}</div></div></div>
 <div class="grid g2">
-<div class="sec"><div class="sh">Client</div><div class="vl">${esc(doc.clientName||"—")}</div><div class="bs">${esc(doc.clientPhone||"")}</div></div>
+<div class="sec"><div class="sh">Client</div><div class="vl">${esc(doc.clientName||"—")}</div><div class="bs">${esc(doc.clientPhone||"")}</div>${doc.clientEmail?`<div class="bs">${esc(doc.clientEmail)}</div>`:""}</div>
 <div class="sec"><div class="sh">Véhicule</div><div class="vl">${esc(doc.plate||"—")}</div><div class="bs">${esc(doc.brand||"")} ${esc(doc.model||"")} ${doc.year?"("+esc(doc.year)+")":""} ${doc.km?"· "+esc(doc.km)+" km":""}</div>${doc.vin?`<div class="bs" style="font-family:'Courier New',monospace;">VIN ${esc(doc.vin)}</div>`:""}</div></div>
 <div class="sec"><div class="sh">Détail des prestations</div>
 <table><thead><tr>${hasRef?`<th style="width:18%">Référence</th>`:""}<th>Désignation</th><th class="r">Qté</th><th class="r">PU${isTTC(doc)?(num(doc.tvaRate)?" TTC":""):" HT"}</th><th class="r">Total${isTTC(doc)?(num(doc.tvaRate)?" TTC":""):" HT"}</th></tr></thead><tbody>${rows}</tbody></table>
@@ -862,7 +866,7 @@ function NewOrderForm({ addOrder, teachers, students, user, nav, selOrd, notify 
   const [busy,sbusy] = useState(false);
   const [f,sf] = useState({
     plate:"", brand:"", model:"", firstReg:"", km:"", vin:"", vtype:"client",
-    clientName:"", clientPhone:"", entryDate:today(), entryTime:tNow(),
+    clientName:"", clientPhone:"", clientEmail:"", entryDate:today(), entryTime:tNow(),
     reason:"", fileRef:"",
     teacher: user.role==="enseignant"?user.name:"",
     selStu:[], custTask:"", observations:"", additionalSales:"",
@@ -883,7 +887,7 @@ function NewOrderForm({ addOrder, teachers, students, user, nav, selOrd, notify 
       fileRef:f.fileRef,
       plate:f.plate.toUpperCase(),brand:f.brand,model:f.model,km:f.km,vin:f.vin.toUpperCase().trim(),
       firstReg:f.firstReg,year:f.firstReg?f.firstReg.slice(0,4):"",
-      vtype:f.vtype,clientName:f.clientName,clientPhone:f.clientPhone,
+      vtype:f.vtype,clientName:f.clientName,clientPhone:f.clientPhone,clientEmail:f.clientEmail.trim(),
       entryDate:f.entryDate,entryTime:f.entryTime,reason:f.reason,
       teacher:f.teacher,assignedStudents:f.vtype==="peda"?f.selStu:[],
       tasks:f.tasks,observations:f.observations,additionalSales:f.additionalSales,
@@ -950,9 +954,9 @@ function NewOrderForm({ addOrder, teachers, students, user, nav, selOrd, notify 
             <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))", gap:12 }}>
               <Inp label="Nom du client" value={f.clientName} onChange={v=>set("clientName",v)} placeholder="M. Dupont"/>
               <Inp label="Téléphone" value={f.clientPhone} onChange={v=>set("clientPhone",v)} placeholder="06 12 34 56 78"/>
+              <Inp label="Adresse électronique" value={f.clientEmail} onChange={v=>set("clientEmail",v)} placeholder="client@exemple.fr" type="email"/>
               {isEv && <Inp label="Moyen de contact retenu" value={f.ev.clientContact} onChange={v=>setEv("clientContact",v)} placeholder="Téléphone, SMS, courriel…"/>}
               {isEv && <Inp label="Adresse" value={f.ev.clientAddress} onChange={v=>setEv("clientAddress",v)} placeholder="12 rue des Ateliers, 31000 Toulouse"/>}
-              {isEv && <Inp label="Adresse électronique" value={f.ev.clientEmail} onChange={v=>setEv("clientEmail",v)} placeholder="client@exemple.fr"/>}
             </div>
           </div>
         ) : (
@@ -1279,7 +1283,70 @@ function VehiclesView({ orders, documents, vehicleHistory, user, nav, selOrd, op
   );
 }
 
-function OrderDetail({ orderId, orders, editOrder, removeOrder, isAdmin, user, nav, notify, students }) {
+
+// ── Envoi des documents au client par courriel (enseignants / administrateurs) ──
+// `mailables` : [{ key, label, name, html:()=>string, preselect }]
+function MailModal({ mailables, defaultTo, clientName, user, onClose, notify }) {
+  const [to,sto]=useState(defaultTo||"");
+  const [sel,ssel]=useState(()=>mailables.reduce((a,m)=>({...a,[m.key]:m.preselect!==false}),{}));
+  const [busy,sbusy]=useState(false);
+  const chosen=mailables.filter(m=>sel[m.key]);
+  const compose=(list)=>
+    "Bonjour"+(clientName?" "+clientName:"")+",\n\n"+
+    "Veuillez trouver ci-joint "+(list.length>1?"les documents suivants":"le document suivant")+" concernant votre véhicule :\n"+
+    list.map(m=>"– "+m.label).join("\n")+
+    "\n\nNous restons à votre disposition.\n\nCordialement,\n"+user.name+
+    "\nLycée Gallieni – Atelier BTS Maintenance des Véhicules";
+  const [subject,ssub]=useState("Lycée Gallieni – Atelier BTS MV");
+  const [body,sbody]=useState(()=>compose(mailables.filter(m=>m.preselect!==false)));
+  const send=async()=>{
+    if(!isMail(to)){notify("Adresse électronique invalide","error");return;}
+    if(chosen.length===0){notify("Choisissez au moins un document à joindre","error");return;}
+    sbusy(true);
+    try{
+      await sendDocsByMail({ to:to.trim(), subject, body,
+        docs:chosen.map(m=>({ html:m.html(), name:m.name })) });
+      notify("Courriel envoyé à "+to.trim()+" ("+chosen.length+" pièce"+(chosen.length>1?"s":"")+" jointe"+(chosen.length>1?"s":"")+")");
+      onClose();
+    }catch(e){ console.error("[DMS] envoi courriel",e); notify("Envoi impossible : "+(e.message||e),"error"); }
+    finally{ sbusy(false); }
+  };
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.75)",zIndex:60,display:"flex",alignItems:"center",justifyContent:"center",padding:16,overflowY:"auto"}}>
+      <div style={{background:C.card,borderRadius:16,padding:24,width:"100%",maxWidth:560,border:"1px solid "+C.bdr,maxHeight:"92vh",overflowY:"auto"}}>
+        <h3 style={{color:C.txt,fontSize:18,fontWeight:700,marginBottom:4}}>✉️ Envoyer au client</h3>
+        <p style={{color:C.sub,fontSize:13,marginBottom:16}}>Les documents cochés sont convertis en PDF et joints au courriel.</p>
+        <div style={{marginBottom:14}}>
+          <Inp label="Destinataire *" value={to} onChange={sto} placeholder="client@exemple.fr" type="email"/>
+          {to&&!isMail(to)&&<div style={{color:"#b91c1c",fontSize:12,marginTop:4}}>Adresse électronique incomplète.</div>}
+        </div>
+        <label style={{fontSize:12,color:C.sub,fontWeight:500,display:"block",marginBottom:8}}>Documents à joindre</label>
+        <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:14}}>
+          {mailables.map(m=>(
+            <label key={m.key} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 11px",borderRadius:8,cursor:"pointer",
+              background:sel[m.key]?"#dbeafe":"#f1f5f9",border:"1px solid "+(sel[m.key]?"#3b82f6":C.bdr)}}>
+              <input type="checkbox" checked={!!sel[m.key]} onChange={e=>ssel(p=>({...p,[m.key]:e.target.checked}))}/>
+              <span style={{fontSize:13,color:C.txt}}>{m.label}</span>
+            </label>
+          ))}
+        </div>
+        <div style={{marginBottom:12}}><Inp label="Objet" value={subject} onChange={ssub}/></div>
+        <div style={{marginBottom:8}}><TA label="Message" value={body} onChange={sbody} rows={9}/></div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:18}}>
+          <Btn sm ghost onClick={()=>sbody(compose(chosen))}>↻ Régénérer le message</Btn>
+          <span style={{fontSize:12,color:C.mut}}>{chosen.length} pièce{chosen.length>1?"s":""} jointe{chosen.length>1?"s":""}</span>
+        </div>
+        <div style={{display:"flex",justifyContent:"flex-end",gap:10}}>
+          <Btn ghost onClick={onClose}>Annuler</Btn>
+          <Btn onClick={send} disabled={busy||!isMail(to)||chosen.length===0}>{busy?"Envoi…":"✉️ Envoyer"}</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function OrderDetail({ orderId, orders, documents, editOrder, removeOrder, isAdmin, user, nav, notify, students }) {
+  const [mail,smail]=useState(false);
   const [tab,st]=useState("tasks"); const [showExit,sse]=useState(false); const [newTask,snt]=useState("");
   const o=orders.find(x=>x.id===orderId);
   const [obs,setObs]=useState(o?o.observations||"":""); const [adds,setAdds]=useState(o?o.additionalSales||"":"");
@@ -1315,6 +1382,7 @@ function OrderDetail({ orderId, orders, editOrder, removeOrder, isAdmin, user, n
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
           <Btn sm ghost onClick={()=>generatePDF(o)} style={{borderColor:"#3b82f6",color:"#2563eb"}}>📄 PDF</Btn>
           {isStaff&&<Btn sm ghost onClick={()=>archiveToDrive(o,notify)} style={{borderColor:"#16a34a",color:"#059669"}}>📁 Archiver Drive</Btn>}
+          {isStaff&&<Btn sm ghost onClick={()=>smail(true)} style={{borderColor:"#7c3aed",color:"#6d28d9"}}>✉️ Envoyer au client</Btn>}
           {isStaff&&o.status!=="termine"&&(
             <>
               {o.status==="en_attente"&&<Btn sm onClick={()=>{upd({status:"en_cours"});notify("Intervention démarrée");}}>▶ Démarrer</Btn>}
@@ -1479,6 +1547,16 @@ function OrderDetail({ orderId, orders, editOrder, removeOrder, isAdmin, user, n
           )}
         </div>
       )}
+      {mail&&(()=>{
+        const liés=(documents||[]).filter(d=>d.orderId===o.id||(plateKey(d.plate)&&plateKey(d.plate)===plateKey(o.plate)));
+        const mailables=[
+          { key:"or", label:"Ordre de réparation "+o.orderNum, name:o.orderNum, html:()=>orderHTML(o) },
+          ...liés.map(d=>({ key:d.id, label:(d.kind==="estimate"?"Estimation ":"Facture ")+d.docNum+" · "+eur(docTotals(d).ttc),
+                            name:d.docNum, html:()=>docHTML(d), preselect:false })),
+        ];
+        return <MailModal mailables={mailables} defaultTo={mailOf(o)} clientName={isPeda?o.teacher:o.clientName}
+                 user={user} onClose={()=>smail(false)} notify={notify}/>;
+      })()}
       {showExit&&<ExitModal o={o} onOk={(d,archive)=>{upd({...d,status:"termine"});sse(false);st("exit");notify(archive?"Ordre terminé":"Ordre terminé (non archivé)");if(archive)archiveToDrive({...o,...d,status:"termine"},notify);}} onClose={()=>sse(false)}/>}
     </div>
   );
@@ -1921,8 +1999,9 @@ function DocsList({ kind, documents, openDoc, newDoc }) {
 function DocForm({ kind, initial, orders, documents, tariffs, addDocument, editDocument, removeDocument, isAdmin, user, nav, notify }) {
   const label=DOC_LABEL[kind];
   const back=()=>nav(kind==="estimate"?"estimates":"invoices");
-  const [d,sd]=useState(()=> initial ? {...initial} : { kind, orderId:"", clientName:"", clientPhone:"", plate:"", brand:"", model:"", year:"", km:"", vin:"", items:[], tvaRate:0, priceMode:"ttc", signature:"", notes:"", validUntil:"" });
+  const [d,sd]=useState(()=> initial ? {...initial} : { kind, orderId:"", clientName:"", clientPhone:"", plate:"", brand:"", model:"", year:"", km:"", vin:"", clientEmail:"", items:[], tvaRate:0, priceMode:"ttc", signature:"", notes:"", validUntil:"" });
   const [busy,sbusy]=useState(false);
+  const [mail,smail]=useState(false);
   const [srcEst,setSrcEst]=useState("");
   const isNew=!d.id;
   const estimates=(documents||[]).filter(x=>x.kind==="estimate");
@@ -1930,7 +2009,7 @@ function DocForm({ kind, initial, orders, documents, tariffs, addDocument, editD
     const e=estimates.find(x=>x.id===eid);
     if(!e) return p;
     return {...p, orderId:e.orderId||p.orderId||"",
-      clientName:e.clientName||"", clientPhone:e.clientPhone||"",
+      clientName:e.clientName||"", clientPhone:e.clientPhone||"", clientEmail:e.clientEmail||"",
       plate:e.plate||"", brand:e.brand||"", model:e.model||"",
       year:e.year||"", km:e.km||"", vin:e.vin||"",
       items:(e.items&&e.items.length)?e.items.map(it=>({...it})):p.items,
@@ -1941,7 +2020,7 @@ function DocForm({ kind, initial, orders, documents, tariffs, addDocument, editD
     const o=orders.find(x=>x.id===oid);
     if(!o) return {...p,orderId:oid};
     return {...p,orderId:oid,
-      clientName:p.clientName||o.clientName||"", clientPhone:p.clientPhone||o.clientPhone||"",
+      clientName:p.clientName||o.clientName||"", clientPhone:p.clientPhone||o.clientPhone||"", clientEmail:p.clientEmail||mailOf(o)||"",
       plate:p.plate||o.plate||"", brand:p.brand||o.brand||"", model:p.model||o.model||"",
       year:p.year||o.year||"", km:p.km||o.km||"", vin:p.vin||vinOf(o)||"",
       items:(p.items&&p.items.length)?p.items:(o.tasks||[]).map(tk=>({ref:"",label:tk.label,qty:1,unitPrice:0,unit:""})),
@@ -1972,9 +2051,19 @@ function DocForm({ kind, initial, orders, documents, tariffs, addDocument, editD
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
           {!isNew&&<Btn sm ghost onClick={()=>generateDocPDF(d)} style={{borderColor:"#1d4ed8",color:"#1d4ed8"}}>📄 PDF</Btn>}
           {!isNew&&<Btn sm ghost onClick={()=>archiveDocToDrive(d,notify)} style={{borderColor:"#16a34a",color:"#059669"}}>📁 Drive</Btn>}
+          {!isNew&&<Btn sm ghost onClick={()=>smail(true)} style={{borderColor:"#7c3aed",color:"#6d28d9"}}>✉️ Envoyer</Btn>}
           <Btn sm ghost onClick={back}>← Retour</Btn>
         </div>
       </div>
+      {mail&&(()=>{
+        const or=(orders||[]).find(o=>o.id===d.orderId);
+        const mailables=[
+          { key:"doc", label:label+" "+(d.docNum||"")+" · "+eur(docTotals(d).ttc), name:d.docNum||label, html:()=>docHTML(d) },
+          ...(or?[{ key:"or", label:"Ordre de réparation "+or.orderNum, name:or.orderNum, html:()=>orderHTML(or), preselect:false }]:[]),
+        ];
+        return <MailModal mailables={mailables} defaultTo={d.clientEmail||""} clientName={d.clientName}
+                 user={user} onClose={()=>smail(false)} notify={notify}/>;
+      })()}
       <Crd>
         {kind==="invoice"&&estimates.length>0&&(
           <div style={{marginBottom:8}}>
@@ -1989,6 +2078,7 @@ function DocForm({ kind, initial, orders, documents, tariffs, addDocument, editD
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:12}}>
           <Inp label="Nom du client *" value={d.clientName} onChange={v=>set("clientName",v)} placeholder="M. Dupont"/>
           <Inp label="Téléphone" value={d.clientPhone} onChange={v=>set("clientPhone",v)} placeholder="06 12 34 56 78"/>
+          <Inp label="Adresse électronique" value={d.clientEmail||""} onChange={v=>set("clientEmail",v)} placeholder="client@exemple.fr" type="email"/>
         </div>
         <SecTitle>🚗 Véhicule</SecTitle>
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:12}}>
@@ -2201,7 +2291,7 @@ export default function DMSApp() {
     if(page==="orders")       return<OrdersList orders={orders} nav={nav} selOrd={ssi}/>;
     if(page==="vehicles")     return <VehiclesView orders={orders} documents={documents} vehicleHistory={vehicleHistory} user={cu} nav={nav} selOrd={ssi} openDoc={openDoc} addVh={addVh} editVh={editVh} removeVh={removeVh} notify={notify}/>;
     if(page==="new-order")    return <NewOrderForm addOrder={addOrder} teachers={staff} students={students} user={cu} nav={nav} selOrd={ssi} notify={notify}/>;
-    if(page==="order-detail") return selId?<OrderDetail orderId={selId} orders={orders} editOrder={editOrder} removeOrder={removeOrder} isAdmin={isAdmin} user={cu} nav={nav} notify={notify} students={students}/>:null;
+    if(page==="order-detail") return selId?<OrderDetail orderId={selId} orders={orders} documents={documents} editOrder={editOrder} removeOrder={removeOrder} isAdmin={isAdmin} user={cu} nav={nav} notify={notify} students={students}/>:null;
     if(page==="estimates")    return <DocsList kind="estimate" documents={documents} openDoc={openDoc} newDoc={()=>newDoc("estimate")}/>;
     if(page==="invoices")     return <DocsList kind="invoice" documents={documents} openDoc={openDoc} newDoc={()=>newDoc("invoice")}/>;
     if(page==="doc-form")     return <DocForm kind={docKind} initial={selDoc?documents.find(d=>d.id===selDoc):null} orders={orders} documents={documents} tariffs={tariffs} addDocument={addDocument} editDocument={editDocument} removeDocument={removeDocument} isAdmin={isAdmin} user={cu} nav={nav} notify={notify}/>;

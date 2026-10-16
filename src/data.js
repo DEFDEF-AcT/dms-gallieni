@@ -20,7 +20,7 @@ export function rowToOrder(r) {
     vin: r.vin || "",
     firstReg: r.first_reg || "",        // 1re mise en circulation (repère B)
     vtype: r.vtype,
-    clientName: r.client_name || "", clientPhone: r.client_phone || "",
+    clientName: r.client_name || "", clientPhone: r.client_phone || "", clientEmail: r.client_email || "",
     teacher: r.teacher || "",
     // affichage attendu : chaîne "Nom1, Nom2"
     students: Array.isArray(r.assigned_students) ? r.assigned_students.join(", ") : "",
@@ -81,7 +81,7 @@ export async function deleteOrder(id) {
 export function rowToDoc(r) {
   return {
     id: r.id, kind: r.kind, docNum: r.doc_num, orderId: r.order_id || "",
-    clientName: r.client_name || "", clientPhone: r.client_phone || "",
+    clientName: r.client_name || "", clientPhone: r.client_phone || "", clientEmail: r.client_email || "",
     plate: r.plate || "", brand: r.brand || "", model: r.model || "",
     year: r.year || "", km: r.km || "", vin: r.vin || "",
     items: Array.isArray(r.items) ? r.items : [],
@@ -239,6 +239,19 @@ export const createTeacher = ({ identifier, name, password }) =>
 export const deleteAccount = (id) => callManageStudents({ action: "delete", id });
 export const resetPassword = (id, password) =>
   callManageStudents({ action: "reset_password", id, password });
+
+// ── Envoi par courriel des documents en PDF (même passerelle Apps Script) ────
+// docs : [{ html, name }] — chaque entrée devient une pièce jointe PDF.
+export async function sendDocsByMail({ to, subject, body, docs }) {
+  const { data, error } = await supabase.functions.invoke("archive-order", {
+    body: { action: "mail", to, subject, body, docs },
+  });
+  if (error) throw error;
+  if (!data?.ok) throw new Error(data?.error || "Envoi impossible");
+  // Le script Google doit confirmer l'envoi : sans ce marqueur, il n'est pas à jour.
+  if (!data.mailed) throw new Error("Le script Google n'est pas à jour : le courriel n'a pas été envoyé. Voir docs/apps-script.gs.");
+  return data;
+}
 
 // ── Archivage d'un OR en PDF sur Google Drive (via Edge Function passerelle) ──
 export async function archiveOrder({ html, folder, orderNum }) {

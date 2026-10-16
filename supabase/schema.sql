@@ -45,6 +45,7 @@ create table if not exists orders (
   vtype             text not null check (vtype in ('client','peda')),
   client_name       text default '',
   client_phone      text default '',
+  client_email      text default '',
   teacher           text default '',
   assigned_students jsonb default '[]'::jsonb,          -- ["Jean Martin", ...]
   reason            text default '',
@@ -230,7 +231,7 @@ create table if not exists documents (
   kind         text not null check (kind in ('estimate','invoice')),
   doc_num      text unique,                       -- EST-AAAA-XXXX / FA-AAAA-XXXX
   order_id     uuid references orders(id) on delete set null,
-  client_name  text default '', client_phone text default '',
+  client_name  text default '', client_phone text default '', client_email text default '',
   plate text default '', brand text default '', model text default '',
   year text default '', km text default '', vin text default '',
   items        jsonb default '[]'::jsonb,          -- [{label, qty, unitPrice}]
@@ -290,6 +291,12 @@ alter publication supabase_realtime add table documents;
 -- ----------------------------------------------------------------------------
 -- MIGRATION (bases déjà en service) : traçabilité VE/VH
 --   alter table orders add column if not exists ev jsonb;
+-- MIGRATION : adresse électronique du client
+--   alter table orders    add column if not exists client_email text default '';
+--   alter table documents add column if not exists client_email text default '';
+--   update orders set client_email = ev->>'clientEmail'
+--     where coalesce(client_email,'') = '' and ev is not null
+--       and coalesce(ev->>'clientEmail','') <> '';
 -- MIGRATION : date de 1re mise en circulation
 --   alter table orders add column if not exists first_reg date;
 --   update orders set first_reg = (ev->>'firstReg')::date

@@ -185,7 +185,7 @@ const EV_STEPS = [
 const evStep0 = () => ({ name:"", date:"", time:"", visa:"" });
 const EV0 = () => ({
   energy:"",
-  clientAddress:"", clientContact:"",
+  clientContact:"",
   opType:"non_elec", quoteAmount:"", returnDate:"", returnTime:"",
   steps: EV_STEPS.reduce((a, st) => { a[st.id] = evStep0(); return a; }, {}),
 });
@@ -396,9 +396,8 @@ function orderHTML(order) {
         <div><div class="lb">Nom du client</div><div class="vl">${esc(order.clientName||"—")}</div></div>
         <div><div class="lb">Téléphone</div><div class="vl">${esc(order.clientPhone||"—")}</div></div>
       </div>
-      <div class="grid ${ev?"g3":"g2"}" style="margin-top:6px;">
+      <div class="grid g2" style="margin-top:6px;">
         <div><div class="lb">Adresse électronique</div><div class="vl">${esc(mailOf(order)||"—")}</div></div>${ev?`
-        <div><div class="lb">Adresse</div><div class="vl">${esc(ev.clientAddress||"—")}</div></div>
         <div><div class="lb">Moyen de contact retenu</div><div class="vl">${esc(ev.clientContact||"—")}</div></div>`:""}
       </div>
     </div>`;
@@ -933,7 +932,7 @@ function NewOrderForm({ addOrder, teachers, students, clients, reloadClients, us
       // La base clients s'enrichit au fil des ordres (staff uniquement : RLS).
       if(f.vtype==="client"&&f.clientName.trim()&&user.role!=="eleve"){
         await rememberClient({ name:f.clientName, phone:f.clientPhone, email:f.clientEmail,
-          address:f.ev?f.ev.clientAddress:"", createdBy:user.name }, clients);
+          createdBy:user.name }, clients);
         reloadClients&&reloadClients();
       }
       selOrd(created.id);nav("order-detail");notify((f.ev?"Ordre VE/VH ":"Ordre de réparation ")+created.orderNum+" créé");
@@ -993,12 +992,10 @@ function NewOrderForm({ addOrder, teachers, students, clients, reloadClients, us
               <ClientPicker clients={clients} name={f.clientName}
                 onName={v=>set("clientName",v)}
                 onPick={c=>sf(p=>({...p, clientName:c.name,
-                  clientPhone:p.clientPhone||c.phone, clientEmail:p.clientEmail||c.email,
-                  ev:p.ev?{...p.ev, clientAddress:p.ev.clientAddress||c.address}:p.ev }))}/>
+                  clientPhone:p.clientPhone||c.phone, clientEmail:p.clientEmail||c.email }))}/>
               <Inp label="Téléphone" value={f.clientPhone} onChange={v=>set("clientPhone",v)} placeholder="06 12 34 56 78"/>
               <Inp label="Adresse électronique" value={f.clientEmail} onChange={v=>set("clientEmail",v)} placeholder="client@exemple.fr" type="email"/>
               {isEv && <Inp label="Moyen de contact retenu" value={f.ev.clientContact} onChange={v=>setEv("clientContact",v)} placeholder="Téléphone, SMS, courriel…"/>}
-              {isEv && <Inp label="Adresse" value={f.ev.clientAddress} onChange={v=>setEv("clientAddress",v)} placeholder="12 rue des Ateliers, 31000 Toulouse"/>}
             </div>
           </div>
         ) : (
@@ -1776,9 +1773,9 @@ function TariffRow({ t, onSave, onDelete }) {
 }
 
 function ClientRow({ c, orders, onSave, onDelete }) {
-  const snap=()=>({ name:c.name, phone:c.phone, email:c.email, address:c.address, notes:c.notes });
+  const snap=()=>({ name:c.name, phone:c.phone, email:c.email, notes:c.notes });
   const [f,sf]=useState(snap);
-  useEffect(()=>{ sf(snap()); },[c.id,c.name,c.phone,c.email,c.address,c.notes]); // eslint-disable-line
+  useEffect(()=>{ sf(snap()); },[c.id,c.name,c.phone,c.email,c.notes]); // eslint-disable-line
   const set=(k,v)=>sf(p=>({...p,[k]:v}));
   const blur=(k)=>{ const v=(f[k]||"").trim(); if(v!==(c[k]||"")) onSave({[k]:v}); };
   const fld=(k,ph)=>(<input value={f[k]} onChange={e=>set(k,e.target.value)} onBlur={()=>blur(k)} placeholder={ph} style={TI}/>);
@@ -1790,7 +1787,6 @@ function ClientRow({ c, orders, onSave, onDelete }) {
         <div style={{flex:"1 1 150px"}}><label style={{fontSize:11,color:C.mut}}>Téléphone</label>{fld("phone","06 12 34 56 78")}</div>
         <div style={{flex:"2 1 200px"}}><label style={{fontSize:11,color:C.mut}}>Adresse électronique</label>{fld("email","client@exemple.fr")}</div>
       </div>
-      <div style={{marginBottom:8}}><label style={{fontSize:11,color:C.mut}}>Adresse</label>{fld("address","12 rue des Ateliers, 31000 Toulouse")}</div>
       <div style={{marginBottom:8}}><label style={{fontSize:11,color:C.mut}}>Notes</label>{fld("notes","Remarques internes")}</div>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,flexWrap:"wrap"}}>
         <span style={{fontSize:12,color:C.mut}}>{nb>0?nb+" ordre"+(nb>1?"s":"")+" à son nom":"Aucun ordre enregistré"}</span>
@@ -1992,7 +1988,7 @@ function AdminPanel({ students, staff, orders, tariffs, reloadTariffs, clients, 
       )}
       {tab==="clients"&&(()=>{
         const q=cq.trim().toLowerCase();
-        const shown=(clients||[]).filter(c=>!q||[c.name,c.phone,c.email,c.address].join(" ").toLowerCase().includes(q));
+        const shown=(clients||[]).filter(c=>!q||[c.name,c.phone,c.email].join(" ").toLowerCase().includes(q));
         return (
           <div style={{display:"flex",flexDirection:"column",gap:14}}>
             <Crd>

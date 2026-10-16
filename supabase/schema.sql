@@ -418,7 +418,6 @@ create table if not exists clients (
   name       text not null,
   phone      text default '',
   email      text default '',
-  address    text default '',
   notes      text default '',
   created_by text default '',
   created_at timestamptz default now(),

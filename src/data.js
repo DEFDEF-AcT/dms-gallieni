@@ -129,12 +129,12 @@ export async function deleteDocument(id) {
 export function rowToClient(r) {
   return {
     id: r.id, name: r.name || "", phone: r.phone || "", email: r.email || "",
-    address: r.address || "", notes: r.notes || "", createdBy: r.created_by || "",
+    notes: r.notes || "", createdBy: r.created_by || "",
   };
 }
 function clientToRow(c) {
   const row = {};
-  for (const k of ["name", "phone", "email", "address", "notes", "createdBy"])
+  for (const k of ["name", "phone", "email", "notes", "createdBy"])
     if (k in c) row[camelToSnake(k)] = (c[k] ?? "").trim ? (c[k] ?? "").trim() : c[k];
   return row;
 }
@@ -160,16 +160,15 @@ export async function deleteClient(id) {
 // Enregistre le client s'il est nouveau, complète ses coordonnées s'il existe
 // déjà mais qu'elles manquent. Silencieux en cas d'échec : ne doit jamais
 // empêcher la création de l'ordre.
-export async function rememberClient({ name, phone, email, address, createdBy }, known) {
+export async function rememberClient({ name, phone, email, createdBy }, known) {
   const n = (name || "").trim();
   if (!n) return null;
   try {
     const existing = (known || []).find((c) => c.name.toLowerCase() === n.toLowerCase());
-    if (!existing) return await insertClient({ name: n, phone, email, address, createdBy });
+    if (!existing) return await insertClient({ name: n, phone, email, createdBy });
     const patch = {};
     if (phone && !existing.phone) patch.phone = phone;
     if (email && !existing.email) patch.email = email;
-    if (address && !existing.address) patch.address = address;
     return Object.keys(patch).length ? await updateClient(existing.id, patch) : existing;
   } catch (e) {
     console.warn("[DMS] base clients non mise à jour", e?.message || e);

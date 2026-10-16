@@ -74,7 +74,17 @@ Deno.serve(async (req) => {
     });
     const txt = await r.text();
     let res: Record<string, unknown>;
-    try { res = JSON.parse(txt); } catch { res = { ok: false, error: "Réponse inattendue du script: " + txt.slice(0, 200) }; }
+    try { res = JSON.parse(txt); }
+    catch {
+      // Une page HTML au lieu de JSON = Google réclame une connexion : l'application
+      // web n'est pas publiée en accès libre (ou son URL /exec a changé).
+      res = txt.trimStart().startsWith("<")
+        ? { ok: false, error: "Le script Google a renvoyé une page de connexion au lieu de données. " +
+            "Dans Apps Script → Déployer → Gérer les déploiements → ✏️ : « Exécuter en tant que » = Moi, " +
+            "« Qui a accès » = Tout le monde, puis Déployer. Vérifiez aussi que l'URL /exec affichée " +
+            "est bien celle enregistrée dans le secret APPS_SCRIPT_URL." }
+        : { ok: false, error: "Réponse inattendue du script : " + txt.slice(0, 200) };
+    }
 
     // Un script à jour confirme l'envoi par `mailed`. Sans ce marqueur, c'est
     // l'ancienne version qui répond : le code est enregistré mais pas redéployé.

@@ -38,7 +38,8 @@ create table if not exists orders (
   plate             text not null,
   brand             text not null,
   model             text not null,
-  year              text default '',
+  year              text default '',                  -- année de la 1re MEC (alimentée depuis first_reg)
+  first_reg         date,                              -- 1re mise en circulation (repère B)
   km                text default '',
   vin               text default '',                  -- n° d'identification (repère E)
   vtype             text not null check (vtype in ('client','peda')),
@@ -289,6 +290,10 @@ alter publication supabase_realtime add table documents;
 -- ----------------------------------------------------------------------------
 -- MIGRATION (bases déjà en service) : traçabilité VE/VH
 --   alter table orders add column if not exists ev jsonb;
+-- MIGRATION : date de 1re mise en circulation
+--   alter table orders add column if not exists first_reg date;
+--   update orders set first_reg = (ev->>'firstReg')::date
+--     where first_reg is null and ev is not null and coalesce(ev->>'firstReg','') <> '';
 -- MIGRATION : VIN dans l'identification du véhicule
 --   alter table orders          add column if not exists vin text default '';
 --   alter table documents       add column if not exists vin text default '';

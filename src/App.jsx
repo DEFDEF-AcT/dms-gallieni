@@ -182,7 +182,7 @@ const EV_STEPS = [
 ];
 const evStep0 = () => ({ name:"", date:"", time:"", visa:"" });
 const EV0 = () => ({
-  energy:"", firstReg:"",
+  energy:"",
   clientAddress:"", clientEmail:"", clientContact:"",
   opType:"non_elec", quoteAmount:"", returnDate:"", returnTime:"",
   steps: EV_STEPS.reduce((a, st) => { a[st.id] = evStep0(); return a; }, {}),
@@ -196,6 +196,10 @@ const evTodo  = (ev) => !!ev && ev.opType !== "non_elec" && !evDone(evStep(ev,"c
 const evWhen  = (st) => evDone(st) ? fD(st.date) + (st.time ? " à " + st.time : "") : "";
 // VIN de l'ordre ; les OR VE/VH antérieurs le portaient dans `ev`.
 const vinOf = (o) => (o && (o.vin || (o.ev && o.ev.vin))) || "";
+// 1re mise en circulation ; les OR VE/VH antérieurs la portaient dans `ev`.
+const mecOf = (o) => (o && (o.firstReg || (o.ev && o.ev.firstReg))) || "";
+// Affichage : la date complète si on l'a, sinon l'année seule des anciens OR.
+const mecTxt = (o) => mecOf(o) ? fD(mecOf(o)) : (o && o.year ? o.year : "");
 
 // ── Données Supabase (remplace localStorage) ──
 // Collection générique : fetch initial + abonnement realtime (refetch sur
@@ -300,10 +304,10 @@ function csvExport(rows, fname) {
   const a = document.createElement("a"); a.href = URL.createObjectURL(b); a.download = fname; a.click();
 }
 function toCSV(orders) {
-  const H = ["N° OR","Réf.","Immat.","VIN","Marque","Modèle","Année","KM","Type","Client/Enseignant","Élèves","Motif","Date d'entrée","Heure","Date de sortie","Statut","Tâches OK","Tâches total","Observations","Ventes add.","Signature accord","Créé par",
+  const H = ["N° OR","Réf.","Immat.","VIN","Marque","Modèle","1re MEC","KM","Type","Client/Enseignant","Élèves","Motif","Date d'entrée","Heure","Date de sortie","Statut","Tâches OK","Tâches total","Observations","Ventes add.","Signature accord","Créé par",
              "VE/VH","Énergie","VIN","Type d'opération","Consignation","Déconsignation"];
   return [H, ...orders.map(o => [
-    o.orderNum, o.fileRef||"", o.plate, vinOf(o), o.brand, o.model, o.year||"", o.km||"",
+    o.orderNum, o.fileRef||"", o.plate, vinOf(o), o.brand, o.model, mecTxt(o), o.km||"",
     o.vtype==="peda"?"Pédagogique":"Client",
     o.vtype==="client"?(o.clientName||""):(o.teacher||""),
     o.students||"", o.reason||"", fD(o.entryDate), o.entryTime||"", fD(o.exitDate),
@@ -385,7 +389,7 @@ function orderHTML(order) {
       </div>`:""}
     </div>`;
   const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(order.orderNum)}</title>
-<style>*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#111;background:#fff;}.page{padding:12mm 15mm;max-width:210mm;margin:0 auto;}.hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #1d4ed8;padding-bottom:10px;margin-bottom:14px;}.bn{font-size:20px;font-weight:bold;color:#1d4ed8;}.bs{font-size:10px;color:#555;margin-top:2px;}.on{font-size:22px;font-weight:bold;color:#1d4ed8;text-align:right;}.om{font-size:10px;color:#555;text-align:right;margin-top:2px;}.sec{margin-bottom:10px;}.sh{background:#1d4ed8;color:#fff;padding:4px 10px;font-size:11px;font-weight:bold;margin-bottom:6px;}.grid{display:grid;gap:6px 10px;}.g2{grid-template-columns:1fr 1fr;}.g3{grid-template-columns:1fr 1fr 1fr;}.g5{grid-template-columns:repeat(5,1fr);}.lb{font-size:9px;color:#888;text-transform:uppercase;letter-spacing:.4px;margin-bottom:2px;}.vl{font-size:12px;font-weight:bold;border-bottom:1px solid #ccc;padding-bottom:2px;min-height:17px;}.bdg{display:inline-block;padding:2px 10px;border-radius:20px;font-size:10px;font-weight:bold;}.tasks{display:grid;grid-template-columns:1fr 1fr;gap:0;}.ti{display:flex;align-items:center;gap:6px;padding:4px 5px;border-bottom:1px dotted #e5e5e5;font-size:11px;}.ti.odd{background:#f9f9f9;}.cb{width:13px;height:13px;border:1.5px solid #555;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;font-size:10px;font-weight:bold;}.ck{border-color:#059669;background:#d1fae5;color:#059669;}.td{color:#059669;text-decoration:line-through;}.tby{margin-left:auto;font-size:9px;color:#888;white-space:nowrap;}.tb{border:1px solid #ddd;padding:6px 8px;min-height:52px;font-size:11px;line-height:1.5;white-space:pre-wrap;}.sr{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:16px;padding-top:12px;border-top:2px solid #1d4ed8;}.sl{font-size:10px;color:#333;font-weight:bold;margin-bottom:5px;}.sb{border:1px solid #999;height:82px;display:flex;align-items:center;justify-content:center;background:#fafafa;overflow:hidden;}.sn{font-size:9px;color:#888;text-align:center;margin-top:3px;}.foot{margin-top:14px;padding-top:8px;border-top:1px solid #ddd;font-size:9px;color:#aaa;text-align:center;}.twocol{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;}.warn{border:1.5px solid #b91c1c;background:#fef2f2;color:#b91c1c;padding:6px 10px;font-size:10.5px;font-weight:bold;margin-bottom:10px;}table.opt,table.trc,table.wk{width:100%;border-collapse:collapse;font-size:10.5px;}table.opt th,table.trc th,table.wk th{background:#1d4ed8;color:#fff;padding:4px 6px;font-size:9.5px;text-align:left;border:1px solid #1d4ed8;}table.opt td,table.trc td,table.wk td{border:1px solid #ccc;padding:4px 6px;vertical-align:top;}table.opt{margin-bottom:6px;}table.opt th{text-align:center;}.oc{height:24px;text-align:center;font-size:15px;font-weight:bold;color:#111;}.oc.on{background:#dbeafe;color:#1d4ed8;}.trc .el{font-weight:bold;background:#f4f7ff;}.trc .vz{background:#fafafa;}td.c,th.c{text-align:center;}td.r,th.r{text-align:right;}.wk .ok{color:#059669;font-weight:bold;}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}.page{padding:8mm 12mm;}}</style>
+<style>*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#111;background:#fff;}.page{padding:12mm 15mm;max-width:210mm;margin:0 auto;}.hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #1d4ed8;padding-bottom:10px;margin-bottom:14px;}.bn{font-size:20px;font-weight:bold;color:#1d4ed8;}.bs{font-size:10px;color:#555;margin-top:2px;}.on{font-size:22px;font-weight:bold;color:#1d4ed8;text-align:right;}.om{font-size:10px;color:#555;text-align:right;margin-top:2px;}.sec{margin-bottom:10px;}.sh{background:#1d4ed8;color:#fff;padding:4px 10px;font-size:11px;font-weight:bold;margin-bottom:6px;}.grid{display:grid;gap:6px 10px;}.g2{grid-template-columns:1fr 1fr;}.g3{grid-template-columns:1fr 1fr 1fr;}.g5{grid-template-columns:repeat(5,1fr);}.lb{font-size:9px;color:#888;text-transform:uppercase;letter-spacing:.4px;margin-bottom:2px;}.vl{font-size:12px;font-weight:bold;border-bottom:1px solid #ccc;padding-bottom:2px;min-height:17px;}.bdg{display:inline-block;padding:2px 10px;border-radius:20px;font-size:10px;font-weight:bold;}.tasks{display:grid;grid-template-columns:1fr 1fr;gap:0;}.ti{display:flex;align-items:center;gap:6px;padding:4px 5px;border-bottom:1px dotted #e5e5e5;font-size:11px;}.ti.odd{background:#f9f9f9;}.cb{width:13px;height:13px;border:1.5px solid #555;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;font-size:10px;font-weight:bold;}.ck{border-color:#059669;background:#d1fae5;color:#059669;}.td{color:#059669;font-weight:bold;}.tby{margin-left:auto;font-size:9px;color:#888;white-space:nowrap;}.tb{border:1px solid #ddd;padding:6px 8px;min-height:52px;font-size:11px;line-height:1.5;white-space:pre-wrap;}.sr{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:16px;padding-top:12px;border-top:2px solid #1d4ed8;}.sl{font-size:10px;color:#333;font-weight:bold;margin-bottom:5px;}.sb{border:1px solid #999;height:82px;display:flex;align-items:center;justify-content:center;background:#fafafa;overflow:hidden;}.sn{font-size:9px;color:#888;text-align:center;margin-top:3px;}.foot{margin-top:14px;padding-top:8px;border-top:1px solid #ddd;font-size:9px;color:#aaa;text-align:center;}.twocol{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;}.warn{border:1.5px solid #b91c1c;background:#fef2f2;color:#b91c1c;padding:6px 10px;font-size:10.5px;font-weight:bold;margin-bottom:10px;}table.opt,table.trc,table.wk{width:100%;border-collapse:collapse;font-size:10.5px;}table.opt th,table.trc th,table.wk th{background:#1d4ed8;color:#fff;padding:4px 6px;font-size:9.5px;text-align:left;border:1px solid #1d4ed8;}table.opt td,table.trc td,table.wk td{border:1px solid #ccc;padding:4px 6px;vertical-align:top;}table.opt{margin-bottom:6px;}table.opt th{text-align:center;}.oc{height:24px;text-align:center;font-size:15px;font-weight:bold;color:#111;}.oc.on{background:#dbeafe;color:#1d4ed8;}.trc .el{font-weight:bold;background:#f4f7ff;}.trc .vz{background:#fafafa;}td.c,th.c{text-align:center;}td.r,th.r{text-align:right;}.wk .ok{color:#059669;font-weight:bold;}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}.page{padding:8mm 12mm;}}</style>
 </head><body><div class="page">
 <div class="hdr"><div><div class="bn">Lycée Gallieni</div><div class="bs">Atelier BTS Maintenance des Véhicules</div><div class="bs" style="font-weight:bold;margin-top:5px;font-size:12px;">ORDRE DE RÉPARATION${ev?" – VÉHICULE ÉLECTRIQUE / HYBRIDE":""}</div></div>
 <div><div class="on">${esc(order.orderNum)}</div><div class="om">Réf. dossier : ${esc(order.fileRef||"—")}</div><div class="om">Entrée le ${fD(order.entryDate)} à ${esc(order.entryTime||"—")}</div><div class="om">Créé par : ${esc(order.createdBy||"—")}</div>
@@ -394,12 +398,12 @@ function orderHTML(order) {
 <div><div class="lb">Immatriculation</div><div class="vl" style="font-size:14px;">${esc(order.plate)}</div></div>
 <div><div class="lb">Marque</div><div class="vl">${esc(order.brand)}</div></div>
 <div><div class="lb">Modèle</div><div class="vl">${esc(order.model)}</div></div>
-<div><div class="lb">Année</div><div class="vl">${esc(order.year||"—")}</div></div>
+<div><div class="lb">1re MEC</div><div class="vl">${esc(mecTxt(order)||"—")}</div></div>
 <div><div class="lb">Kilométrage</div><div class="vl">${order.km?esc(order.km)+" km":"—"}</div></div></div>
 <div class="grid ${ev?"g3":"g2"}" style="margin-top:6px;">
 <div><div class="lb">VIN – 17 caractères (repère E)</div><div class="vl">${esc(vinOf(order)||"—")}</div></div>${ev?`
 <div><div class="lb">Énergie (repère P.3)</div><div class="vl">${esc(ev.energy||"—")}</div></div>
-<div><div class="lb">1re immatriculation (repère B)</div><div class="vl">${ev.firstReg?fD(ev.firstReg):"—"}</div></div>`:`
+<div><div class="lb">Réf. dossier</div><div class="vl">${esc(order.fileRef||"—")}</div></div>`:`
 <div><div class="lb">Réf. dossier</div><div class="vl">${esc(order.fileRef||"—")}</div></div>`}</div>
 <div style="margin-top:7px;"><span class="bdg" style="background:${isPeda?"#ffedd5":"#dbeafe"};color:${isPeda?"#9a3412":"#1e40af"};">${isPeda?"🎓 Véhicule pédagogique":"👤 Véhicule client"}</span>${ev?`<span class="bdg" style="background:#fef9c3;color:#a16207;margin-left:6px;">⚡ Véhicule électrique / hybride</span>`:""}</div></div>
 ${ev&&ev.opType!=="non_elec"?`<div class="warn">⚠ Opération sur le circuit haute tension : la batterie de traction doit être mise en sécurité (consignation) par un chargé de consignation BCL avant toute intervention.</div>`:""}
@@ -857,7 +861,7 @@ function StudentPicker({ students, selected, onToggle }) {
 function NewOrderForm({ addOrder, teachers, students, user, nav, selOrd, notify }) {
   const [busy,sbusy] = useState(false);
   const [f,sf] = useState({
-    plate:"", brand:"", model:"", year:"", km:"", vin:"", vtype:"client",
+    plate:"", brand:"", model:"", firstReg:"", km:"", vin:"", vtype:"client",
     clientName:"", clientPhone:"", entryDate:today(), entryTime:tNow(),
     reason:"", fileRef:"",
     teacher: user.role==="enseignant"?user.name:"",
@@ -877,7 +881,8 @@ function NewOrderForm({ addOrder, teachers, students, user, nav, selOrd, notify 
     if(!f.plate.trim()||!f.brand.trim()||!f.model.trim()){notify("Immatriculation, marque et modèle sont obligatoires","error");return;}
     const o={
       fileRef:f.fileRef,
-      plate:f.plate.toUpperCase(),brand:f.brand,model:f.model,year:f.year,km:f.km,vin:f.vin.toUpperCase().trim(),
+      plate:f.plate.toUpperCase(),brand:f.brand,model:f.model,km:f.km,vin:f.vin.toUpperCase().trim(),
+      firstReg:f.firstReg,year:f.firstReg?f.firstReg.slice(0,4):"",
       vtype:f.vtype,clientName:f.clientName,clientPhone:f.clientPhone,
       entryDate:f.entryDate,entryTime:f.entryTime,reason:f.reason,
       teacher:f.teacher,assignedStudents:f.vtype==="peda"?f.selStu:[],
@@ -926,12 +931,11 @@ function NewOrderForm({ addOrder, teachers, students, user, nav, selOrd, notify 
           <Inp label="Immatriculation *" value={f.plate} onChange={v=>set("plate",v)} placeholder="AB-123-CD"/>
           <Inp label="Marque *" value={f.brand} onChange={v=>set("brand",v)} placeholder="Peugeot"/>
           <Inp label="Modèle *" value={f.model} onChange={v=>set("model",v)} placeholder="308 SW"/>
-          <Inp label="Année" value={f.year} onChange={v=>set("year",v)} placeholder="2020"/>
+          <Inp label="Date de 1ère MEC" value={f.firstReg} onChange={v=>set("firstReg",v)} type="date"/>
           <Inp label="Kilométrage" value={f.km} onChange={v=>set("km",v)} placeholder="45000"/>
           <Inp label="VIN – 17 caractères (repère E)" value={f.vin} onChange={v=>set("vin",v.toUpperCase())} placeholder="VF3XXXXXXXXXXXXXX"/>
           <Sel label="Type de véhicule" value={f.vtype} onChange={v=>set("vtype",v)} opts={[{v:"client",l:"👤 Véhicule client"},{v:"peda",l:"🎓 Véhicule pédagogique"}]}/>
           {isEv && <Sel label="Énergie (repère P.3)" value={f.ev.energy} onChange={v=>setEv("energy",v)} opts={EV_ENERGIES.map(e=>({v:e,l:e||"— Choisir —"}))}/>}
-          {isEv && <Inp label="1re immatriculation (repère B)" value={f.ev.firstReg} onChange={v=>setEv("firstReg",v)} type="date"/>}
         </div>
         <SecTitle>📁 Dossier</SecTitle>
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))", gap:12 }}>
@@ -1012,8 +1016,7 @@ function NewOrderForm({ addOrder, teachers, students, user, nav, selOrd, notify 
           <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(230px,1fr))", gap:8, marginBottom:10 }}>
             {f.tasks.map(t => (
               <div key={t.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 10px", borderRadius:6, background:"#f1f5f9", border:"1px solid "+C.bdr, fontSize:13, color:C.txt }}>
-                <span style={{ width:15, height:15, borderRadius:3, border:"2px solid "+C.bdr, background:"#fff", flexShrink:0 }}/>
-                <span style={{ flex:1 }}>{t.label}</span>
+                  <span style={{ flex:1 }}>{t.label}</span>
                 <button onClick={e=>{e.preventDefault();set("tasks",f.tasks.filter(x=>x.id!==t.id));}} title="Retirer ce travail" style={{ background:"none", border:"none", color:C.mut, cursor:"pointer", fontSize:16, padding:0, lineHeight:1 }}>×</button>
               </div>
             ))}
@@ -1322,7 +1325,7 @@ function OrderDetail({ orderId, orders, editOrder, removeOrder, isAdmin, user, n
       <Crd style={{marginBottom:12}}>
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:12,fontSize:13}}>
           {[{k:"N° OR",v:o.orderNum},{k:"Réf. dossier",v:o.fileRef||"—"},{k:"Entrée",v:fD(o.entryDate)+" "+o.entryTime},{k:isPeda?"Enseignant":"Client",v:isPeda?(o.teacher||"—"):(o.clientName||"—")}]
-            .concat(vinOf(o)?[{k:"VIN",v:vinOf(o)}]:[],o.clientPhone?[{k:"Tel.",v:o.clientPhone}]:[],o.students?[{k:"Élèves",v:o.students}]:[],[{k:"Avancement",v:dn+"/"+tot+" ("+pct+"%)"}])
+            .concat(mecTxt(o)?[{k:"1re MEC",v:mecTxt(o)}]:[],vinOf(o)?[{k:"VIN",v:vinOf(o)}]:[],o.clientPhone?[{k:"Tel.",v:o.clientPhone}]:[],o.students?[{k:"Élèves",v:o.students}]:[],[{k:"Avancement",v:dn+"/"+tot+" ("+pct+"%)"}])
             .map(item=>(
               <div key={item.k}>
                 <div style={{color:C.mut,fontSize:11,marginBottom:2}}>{item.k}</div>
@@ -1361,7 +1364,7 @@ function OrderDetail({ orderId, orders, editOrder, removeOrder, isAdmin, user, n
               <div style={{width:20,height:20,borderRadius:4,flexShrink:0,background:t.done?"#16a34a":"transparent",border:"2px solid "+(t.done?"#16a34a":"#4b5563"),display:"flex",alignItems:"center",justifyContent:"center"}}>
                 {t.done&&<span style={{color:"#fff",fontSize:12,fontWeight:700}}>✓</span>}
               </div>
-              <span style={{flex:1,fontSize:14,color:t.done?"#15803d":C.txt,textDecoration:t.done?"line-through":"none"}}>{t.label}</span>
+              <span style={{flex:1,fontSize:14,color:t.done?"#15803d":C.txt,fontWeight:t.done?600:400}}>{t.label}</span>
               {o.ev&&t.est&&<span style={{fontSize:11,color:C.mut,whiteSpace:"nowrap"}}>⏱ {t.est}</span>}
               {o.ev&&t.amount&&<span style={{fontSize:11,color:C.mut,whiteSpace:"nowrap"}}>{eur(t.amount)} HT</span>}
               {t.done&&t.doneBy&&<span style={{fontSize:11,color:C.mut,whiteSpace:"nowrap"}}>{t.doneBy} · {fD(t.doneAt)}</span>}
@@ -1383,7 +1386,7 @@ function OrderDetail({ orderId, orders, editOrder, removeOrder, isAdmin, user, n
               <span style={{fontSize:12,fontWeight:700,padding:"4px 12px",borderRadius:999,background:evOp(o.ev.opType).bg,color:evOp(o.ev.opType).col}}>{evOp(o.ev.opType).l}</span>
               {o.ev.energy&&<span style={{fontSize:12,color:C.sub}}>🔋 {o.ev.energy}</span>}
               {vinOf(o)&&<span style={{fontSize:12,color:C.mut}}>VIN {vinOf(o)}</span>}
-              {o.ev.firstReg&&<span style={{fontSize:12,color:C.mut}}>1re immat. {fD(o.ev.firstReg)}</span>}
+              {mecOf(o)&&<span style={{fontSize:12,color:C.mut}}>1re MEC {fD(mecOf(o))}</span>}
             </div>
             <div style={{marginTop:10,padding:"10px 12px",borderRadius:8,fontSize:13,fontWeight:600,
               background:evTodo(o.ev)?"#fee2e2":evOpen(o.ev)?"#dcfce7":"#f1f5f9",

@@ -6,7 +6,7 @@ import { supabase } from "./supabase";
 // pour ne pas toucher au JSX existant.
 
 const camelToSnake = (s) => s.replace(/[A-Z]/g, (m) => "_" + m.toLowerCase());
-const DATE_COLS = new Set(["entry_date", "exit_date"]);
+const DATE_COLS = new Set(["entry_date", "exit_date", "first_reg"]);
 // Champs qui n'existent pas en base ou gérés par la DB → jamais écrits.
 const SKIP_WRITE = new Set(["id", "orderNum", "students", "createdAt"]);
 
@@ -18,6 +18,7 @@ export function rowToOrder(r) {
     plate: r.plate, brand: r.brand, model: r.model,
     year: r.year || "", km: r.km || "",
     vin: r.vin || "",
+    firstReg: r.first_reg || "",        // 1re mise en circulation (repère B)
     vtype: r.vtype,
     clientName: r.client_name || "", clientPhone: r.client_phone || "",
     teacher: r.teacher || "",

@@ -78,7 +78,7 @@ const kmTxt = (k) => {
 function buildVehicles(orders, documents, history) {
   const rows = [];
   (orders || []).forEach(o => rows.push({ plate:o.plate, date:o.exitDate||o.entryDate||o.createdAt||"",
-    brand:o.brand, model:o.model, year:o.year, km:o.km, vin:vinOf(o),
+    brand:o.brand, model:o.model, year:o.year, km:o.km, vin:vinOf(o), vtype:o.vtype,
     client:o.vtype === "peda" ? "Véhicule pédagogique" : (o.clientName || ""), src:"or" }));
   (documents || []).forEach(d => rows.push({ plate:d.plate, date:(d.createdAt||"").slice(0,10),
     brand:d.brand, model:d.model, year:d.year, km:d.km, vin:d.vin, client:d.clientName || "", src:"doc" }));
@@ -90,9 +90,9 @@ function buildVehicles(orders, documents, history) {
       .forEach(r => {
         const k = plateKey(r.plate);
         const v = map.get(k) || { key:k, plate:r.plate, brand:"", model:"", year:"", km:"", vin:"", client:"",
-                                  last:"", nOrders:0, nDocs:0, nNotes:0 };
+                                  vtype:"", last:"", nOrders:0, nDocs:0, nNotes:0 };
         if (r.plate) v.plate = plateFmt(r.plate);
-        for (const f of ["brand", "model", "year", "km", "vin", "client"]) if (r[f]) v[f] = r[f];
+        for (const f of ["brand", "model", "year", "km", "vin", "client", "vtype"]) if (r[f]) v[f] = r[f];
         if (String(r.date) > String(v.last)) v.last = r.date;
         if (r.src === "or") v.nOrders++; else if (r.src === "doc") v.nDocs++; else v.nNotes++;
         map.set(k, v);
@@ -1215,12 +1215,18 @@ function VhModal({ init, plate, user, onSave, onClose }) {
 function VehiclesView({ orders, documents, vehicleHistory, clients, cVehicles, user, nav, selOrd, openDoc, addVh, editVh, removeVh, notify }) {
   const proprio=(plaque)=>{ const v=vehicleOwner(cVehicles,plaque); return v&&(clients||[]).find(c=>c.id===v.clientId); };
   const [q,sq]=useState(""); const [sel,ssel]=useState(null); const [modal,smodal]=useState(null);
+  const [scope,ssc]=useState("client");
   const isStaff=user.role!=="eleve";
-  const vehicles=buildVehicles(orders,documents,vehicleHistory);
+  const tous=buildVehicles(orders,documents,vehicleHistory);
+  // Un véhicule suit le type de son ordre le plus récent ; à défaut, il est
+  // « client » s'il est rattaché à une fiche client, « pédagogique » sinon.
+  const scopeOf=(v)=>v.vtype||(vehicleOwner(cVehicles,v.plate)?"client":"peda");
+  const sc=SCOPES.find(x=>x.v===scope)||SCOPES[0];
+  const vehicles=tous.filter(v=>scopeOf(v)===scope);
   const needle=q.trim().toLowerCase(), nKey=plateKey(q);
   const shown=!needle?vehicles:vehicles.filter(v=>
     (nKey&&v.key.includes(nKey))||[v.plate,v.brand,v.model,v.vin,v.client].join(" ").toLowerCase().includes(needle));
-  const v=sel?vehicles.find(x=>x.key===sel):null;
+  const v=sel?tous.find(x=>x.key===sel):null;
 
   const save=async(data)=>{
     try{
@@ -1334,20 +1340,36 @@ function VehiclesView({ orders, documents, vehicleHistory, clients, cVehicles, u
   return (
     <div style={{maxWidth:900,margin:"0 auto"}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexWrap:"wrap",gap:12}}>
-        <h2 style={{color:C.txt,fontSize:20,fontWeight:700,margin:0}}>🚙 Historique d'entretien des véhicules</h2>
+        <h2 style={{color:C.txt,fontSize:20,fontWeight:700,margin:0}}>🚙 Historique d'entretien – {sc.ico} {sc.lbl}</h2>
         {isStaff&&<Btn sm onClick={()=>smodal({plate:q.trim().toUpperCase()})}>➕ Ajouter une intervention</Btn>}
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))",gap:10,marginBottom:14}}>
+        {SCOPES.map(x=>{
+          const on=scope===x.v, n=tous.filter(y=>scopeOf(y)===x.v).length;
+          return (
+            <button key={x.v} onClick={()=>{ssc(x.v);ssel(null);}} style={{textAlign:"left",padding:"12px 14px",borderRadius:10,cursor:"pointer",
+              border:"2px solid "+(on?x.col:C.bdr),background:on?x.bg:C.card,color:C.txt,fontFamily:"inherit"}}>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <span style={{fontSize:18}}>{x.ico}</span>
+                <span style={{fontSize:15,fontWeight:700,color:on?x.col:C.txt}}>{x.lbl}</span>
+              </div>
+              <div style={{fontSize:11,color:C.mut,marginTop:2}}>{x.sub}</div>
+              <div style={{fontSize:12,color:on?x.col:C.sub,marginTop:6,fontWeight:600}}>{n} véhicule{n>1?"s":""}</div>
+            </button>
+          );
+        })}
       </div>
       <Crd style={{marginBottom:14}}>
         <input value={q} onChange={e=>sq(e.target.value)} placeholder="Rechercher : immatriculation, VIN, marque, modèle, client…"
           style={{width:"100%",background:"#f1f5f9",border:"1px solid "+C.bdr,borderRadius:8,padding:"11px 14px",color:C.txt,fontSize:15,outline:"none",fontFamily:"inherit"}}/>
         <p style={{color:C.mut,fontSize:12,margin:"8px 0 0"}}>
-          {vehicles.length} véhicule(s) connu(s) de l'atelier. La ponctuation de la plaque n'a pas d'importance : « ab123cd » trouve « AB-123-CD ».
+          {vehicles.length} véhicule(s) dans le suivi « {sc.lbl} ». La ponctuation de la plaque n'a pas d'importance : « ab123cd » trouve « AB-123-CD ».
         </p>
       </Crd>
       {shown.length===0?(
         <Crd>
           <p style={{color:C.mut,fontSize:13,margin:0}}>
-            {vehicles.length===0?"Aucun véhicule enregistré pour le moment.":"Aucun véhicule ne correspond à cette recherche."}
+            {vehicles.length===0?"Aucun véhicule dans le suivi « "+sc.lbl+" ».":"Aucun véhicule ne correspond à cette recherche."}
           </p>
           {isStaff&&plateKey(q)&&(
             <div style={{marginTop:12}}>

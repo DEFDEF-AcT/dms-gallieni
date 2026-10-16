@@ -61,7 +61,7 @@ Deno.serve(async (req) => {
       };
     } else {
       const { html, folder, orderNum } = body;
-      if (!html || !orderNum) return json({ ok: false, error: "html et orderNum requis" });
+      if (!html || !orderNum) return json({ ok: false, error: "Passerelle : html et orderNum requis" });
       payload = { secret: scriptSecret, action: "archive", html, folder: folder || "Client sans nom", orderNum };
     }
 
@@ -73,8 +73,19 @@ Deno.serve(async (req) => {
       redirect: "follow",
     });
     const txt = await r.text();
-    let res: unknown;
+    let res: Record<string, unknown>;
     try { res = JSON.parse(txt); } catch { res = { ok: false, error: "Réponse inattendue du script: " + txt.slice(0, 200) }; }
+
+    // Un script à jour confirme l'envoi par `mailed`. Sans ce marqueur, c'est
+    // l'ancienne version qui répond : le code est enregistré mais pas redéployé.
+    if (action === "mail" && res?.mailed !== true) {
+      const d = typeof res?.error === "string" ? " Réponse du script : « " + res.error + " »." : "";
+      return json({
+        ok: false,
+        error: "Le script Google n'a pas traité l'envoi — il est enregistré mais pas redéployé." +
+               " Dans Apps Script : Déployer → Gérer les déploiements → ✏️ → Version : Nouvelle version → Déployer." + d,
+      });
+    }
     return json(res);
   } catch (e) {
     return json({ ok: false, error: String((e as Error)?.message ?? e) }, 500);

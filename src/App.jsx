@@ -1467,7 +1467,7 @@ function OrderDetail({ orderId, orders, documents, editOrder, removeOrder, isAdm
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16,flexWrap:"wrap",gap:12}}>
         <div>
           <Btn ghost sm onClick={()=>nav("orders")} style={{marginBottom:8}}>← Retour</Btn>
-          <h2 style={{color:C.txt,fontSize:20,fontWeight:700,margin:0}}>{o.orderNum} – {o.plate}</h2>
+          <h2 style={{color:C.txt,fontSize:20,fontWeight:700,margin:0}}>{o.orderNum} – {plateFmt(o.plate)}</h2>
           <div style={{display:"flex",gap:8,marginTop:6,flexWrap:"wrap",alignItems:"center"}}>
             <Badge status={o.status}/>
             <span style={{fontSize:12,fontWeight:600,color:isPeda?"#c2410c":"#1d4ed8"}}>{isPeda?"🎓 Pédagogique":"👤 Client"}</span>
@@ -1488,16 +1488,42 @@ function OrderDetail({ orderId, orders, documents, editOrder, removeOrder, isAdm
         </div>
       </div>
       <Crd style={{marginBottom:12}}>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:12,fontSize:13}}>
-          {[{k:"N° OR",v:o.orderNum},{k:"Réf. dossier",v:o.fileRef||"—"},{k:"Entrée",v:fD(o.entryDate)+" "+o.entryTime},{k:isPeda?"Enseignant":"Client",v:isPeda?(o.teacher||"—"):(o.clientName||"—")}]
-            .concat(mecTxt(o)?[{k:"1re MEC",v:mecTxt(o)}]:[],vinOf(o)?[{k:"VIN",v:vinOf(o)}]:[],o.clientPhone?[{k:"Tel.",v:o.clientPhone}]:[],o.students?[{k:"Élèves",v:o.students}]:[],[{k:"Avancement",v:dn+"/"+tot+" ("+pct+"%)"}])
-            .map(item=>(
-              <div key={item.k}>
-                <div style={{color:C.mut,fontSize:11,marginBottom:2}}>{item.k}</div>
-                <div style={{color:C.txt,fontWeight:500,wordBreak:"break-word"}}>{item.v}</div>
-              </div>
-            ))}
-        </div>
+        {[
+          { titre:"🚗 Véhicule", items:[
+              { k:"Immatriculation", v:plateFmt(o.plate)||"—", fort:true },
+              { k:"Marque", v:o.brand||"—" },
+              { k:"Modèle", v:o.model||"—" },
+              { k:"1re MEC", v:mecTxt(o)||"—" },
+              { k:"Kilométrage", v:o.km?kmTxt(o.km)+" km":"—" },
+              { k:"VIN", v:vinOf(o)||"—", mono:true },
+              ...(o.ev&&o.ev.energy?[{ k:"Énergie", v:o.ev.energy }]:[]),
+              ...(o.ev?[{ k:"Type d'opération", v:evOp(o.ev.opType).l }]:[]),
+            ]},
+          { titre:"📁 Dossier", items:[
+              { k:"N° OR", v:o.orderNum, fort:true },
+              { k:"Réf. dossier", v:o.fileRef||"—" },
+              { k:"Entrée", v:fD(o.entryDate)+" "+(o.entryTime||"") },
+              { k:isPeda?"Enseignant":"Client", v:isPeda?(o.teacher||"—"):(o.clientName||"—") },
+              ...(o.clientPhone?[{ k:"Téléphone", v:o.clientPhone }]:[]),
+              ...(mailOf(o)?[{ k:"Adresse électronique", v:mailOf(o) }]:[]),
+              ...(o.students?[{ k:"Élèves", v:o.students }]:[]),
+              { k:"Avancement", v:dn+"/"+tot+" ("+pct+"%)" },
+            ]},
+        ].map((bloc,i)=>(
+          <div key={bloc.titre} style={i?{marginTop:12,paddingTop:12,borderTop:"1px solid "+C.bdr}:undefined}>
+            <div style={{color:C.mut,fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:.4,marginBottom:8}}>{bloc.titre}</div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:12,fontSize:13}}>
+              {bloc.items.map(item=>(
+                <div key={item.k}>
+                  <div style={{color:C.mut,fontSize:11,marginBottom:2}}>{item.k}</div>
+                  <div style={{color:C.txt,fontWeight:item.fort?700:500,fontSize:item.fort?15:13,wordBreak:"break-word",
+                    letterSpacing:item.fort?.4:undefined,
+                    fontFamily:item.mono?"ui-monospace,SFMono-Regular,Menlo,monospace":undefined}}>{item.v}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
         {o.reason&&<div style={{marginTop:12,paddingTop:12,borderTop:"1px solid "+C.bdr,fontSize:13,color:C.sub}}><b>Motif : </b><span style={{color:C.txt}}>{o.reason}</span></div>}
       </Crd>
       {isStaff&&(

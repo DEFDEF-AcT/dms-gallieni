@@ -314,6 +314,59 @@ export async function deleteReminder(id) {
   if (error) throw error;
 }
 
+// ── Planning des rendez-vous (lecture : tous ; écriture : enseignants / admin) ─
+export function rowToRdv(r) {
+  return {
+    id: r.id, day: r.day || "", time: r.time || "", clientId: r.client_id || null,
+    clientName: r.client_name || "", clientPhone: r.client_phone || "", clientEmail: r.client_email || "",
+    plate: r.plate || "", brand: r.brand || "", model: r.model || "", reason: r.reason || "", note: r.note || "",
+    status: r.status || "prevu", orderId: r.order_id || null, createdBy: r.created_by || "", createdAt: r.created_at,
+  };
+}
+function rdvToRow(x) {
+  const row = {};
+  for (const k of ["day", "time", "clientName", "clientPhone", "clientEmail", "plate", "brand", "model", "reason", "note", "status", "createdBy"])
+    if (k in x) row[camelToSnake(k)] = String(x[k] ?? "").trim();
+  if ("clientId" in x) row.client_id = x.clientId || null;
+  if ("orderId" in x) row.order_id = x.orderId || null;
+  return row;
+}
+export async function listAppointments() {
+  const { data, error } = await supabase.from("appointments").select("*")
+    .order("day", { ascending: true }).order("time", { ascending: true });
+  if (error) throw error;
+  return data.map(rowToRdv);
+}
+export async function insertAppointment(x) {
+  const { data, error } = await supabase.from("appointments").insert(rdvToRow(x)).select().single();
+  if (error) throw error;
+  return rowToRdv(data);
+}
+export async function updateAppointment(id, patch) {
+  const { data, error } = await supabase.from("appointments").update(rdvToRow(patch)).eq("id", id).select().single();
+  if (error) throw error;
+  return rowToRdv(data);
+}
+export async function deleteAppointment(id) {
+  const { error } = await supabase.from("appointments").delete().eq("id", id);
+  if (error) throw error;
+}
+// Jours d'atelier fermés
+export async function listClosures() {
+  const { data, error } = await supabase.from("workshop_closures").select("*").order("day");
+  if (error) throw error;
+  return data.map((r) => ({ day: r.day, reason: r.reason || "", createdBy: r.created_by || "" }));
+}
+export async function closeDay(day, reason, createdBy) {
+  const { error } = await supabase.from("workshop_closures")
+    .upsert({ day, reason: String(reason || "").trim(), created_by: createdBy || "" });
+  if (error) throw error;
+}
+export async function reopenDay(day) {
+  const { error } = await supabase.from("workshop_closures").delete().eq("day", day);
+  if (error) throw error;
+}
+
 // ── Tarifs de l'atelier (lecture : tout le monde ; écriture : admin via RLS) ─
 export function rowToTariff(r) {
   return {

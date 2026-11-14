@@ -519,6 +519,63 @@ create policy del_reminders  on reminders for delete using (is_staff());
 alter publication supabase_realtime add table reminders;
 
 -- ============================================================================
+-- PLANNING DES RENDEZ-VOUS : véhicules clients le mercredi et le vendredi,
+-- 3 au maximum par jour (avertissement dans l'application, qui compte aussi
+-- les véhicules encore à l'atelier). Lecture : tous ; écriture : staff.
+-- ============================================================================
+create table if not exists appointments (
+  id           uuid primary key default gen_random_uuid(),
+  day          date not null,
+  time         text default '',
+  client_id    uuid references clients(id) on delete set null,
+  client_name  text not null default '',
+  client_phone text default '',
+  client_email text default '',
+  plate        text default '',
+  brand        text default '',
+  model        text default '',
+  reason       text default '',
+  note         text default '',
+  status       text not null default 'prevu' check (status in ('prevu', 'arrive', 'annule')),
+  order_id     uuid references orders(id) on delete set null,
+  created_by   text default '',
+  created_at   timestamptz default now(),
+  updated_at   timestamptz default now()
+);
+create index if not exists appointments_day_idx on appointments (day);
+drop trigger if exists trg_appointments_touch on appointments;
+create trigger trg_appointments_touch before update on appointments
+  for each row execute function touch_updated_at();
+alter table appointments enable row level security;
+drop policy if exists read_appointments on appointments;
+drop policy if exists ins_appointments  on appointments;
+drop policy if exists upd_appointments  on appointments;
+drop policy if exists del_appointments  on appointments;
+create policy read_appointments on appointments for select using (auth.role() = 'authenticated');
+create policy ins_appointments  on appointments for insert with check (is_staff());
+create policy upd_appointments  on appointments for update using (is_staff());
+create policy del_appointments  on appointments for delete using (is_staff());
+alter publication supabase_realtime add table appointments;
+
+-- Jours d'atelier fermés (vacances, examens, sortie…)
+create table if not exists workshop_closures (
+  day        date primary key,
+  reason     text default '',
+  created_by text default '',
+  created_at timestamptz default now()
+);
+alter table workshop_closures enable row level security;
+drop policy if exists read_closures on workshop_closures;
+drop policy if exists ins_closures  on workshop_closures;
+drop policy if exists upd_closures  on workshop_closures;
+drop policy if exists del_closures  on workshop_closures;
+create policy read_closures on workshop_closures for select using (auth.role() = 'authenticated');
+create policy ins_closures  on workshop_closures for insert with check (is_staff());
+create policy upd_closures  on workshop_closures for update using (is_staff());
+create policy del_closures  on workshop_closures for delete using (is_staff());
+alter publication supabase_realtime add table workshop_closures;
+
+-- ============================================================================
 -- PHOTOS D'ÉTAT D'ENTRÉE — voir supabase/order-photos.sql (table order_photos).
 -- Ce fichier séparé est à exécuter tel quel : originaux sur le Drive
 -- (<client>/<véhicule>/<date>/), miniature + lien dans la table.

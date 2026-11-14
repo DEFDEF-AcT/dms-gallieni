@@ -10,6 +10,7 @@ import {
   listTariffs, insertTariff, updateTariff, deleteTariff,
   listVehicleHistory, insertVehicleHistory, updateVehicleHistory, deleteVehicleHistory,
   listReminders, insertReminder, updateReminder, deleteReminder,
+  listAppointments, insertAppointment, updateAppointment, deleteAppointment, listClosures, closeDay, reopenDay,
   sendDocsByMail,
   listClients, insertClient, updateClient, deleteClient, rememberClient,
   listClientVehicles, deleteClientVehicle, rememberVehicle,
@@ -473,6 +474,43 @@ function dossiersClients({ clients, cVehicles, orders, documents, history, remin
   });
   return { liste, kmDe };
 }
+// ── Planning des rendez-vous ────────────────────────────────────────────────
+// L'atelier reçoit les véhicules clients le mercredi et le vendredi, 3 au plus par jour.
+const ATELIER_JOURS = [3, 5];        // 0 = dimanche … 3 = mercredi, 5 = vendredi
+const ATELIER_MAX = 3;
+const JOURS_FR = ["dimanche", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi"];
+const MOIS_FR = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
+const jourSem = (iso) => { const [y, m, d] = String(iso).slice(0, 10).split("-").map(Number); return new Date(Date.UTC(y, m - 1, d)).getUTCDay(); };
+const plusJours = (iso, n) => { const [y, m, d] = String(iso).slice(0, 10).split("-").map(Number); return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10); };
+const estJourAtelier = (iso) => estDate(iso) && ATELIER_JOURS.includes(jourSem(iso));
+// « mercredi 18 novembre » (`an` : avec l'année)
+const jourTxt = (iso, an) => { const [y, m, d] = String(iso).slice(0, 10).split("-").map(Number);
+  return JOURS_FR[jourSem(iso)] + " " + d + (d === 1 ? "er" : "") + " " + MOIS_FR[m - 1] + (an ? " " + y : ""); };
+const maj1 = (s) => s ? s[0].toUpperCase() + s.slice(1) : s;
+// Les n jours d'atelier à partir de `depuis` (inclus).
+const joursAtelier = (depuis, n) => {
+  const r = [];
+  for (let d = depuis, i = 0; r.length < n && i < 1000; d = plusJours(d, 1), i++) if (estJourAtelier(d)) r.push(d);
+  return r;
+};
+// Véhicules clients présents à l'atelier : ordres « client » non terminés.
+const vehiculesPresents = (orders) => (orders || []).filter(o => o.vtype === "client" && o.status !== "termine");
+// Premier jour d'atelier ouvert à partir de `ref` : c'est lui qu'occupent les
+// véhicules encore à l'atelier.
+const premierJourOuvert = (ref, fermes) => joursAtelier(ref, 120).find(d => !fermes.has(d)) || "";
+// Charge d'un jour d'atelier : ses rendez-vous non annulés, plus, le premier jour
+// ouvert à venir, les véhicules clients encore à l'atelier (OR non terminés) qui
+// n'ont pas de rendez-vous ce jour-là. `sauf` : le rendez-vous en cours de modification.
+function chargeJour(day, { rdvs, presents, prochain, sauf }) {
+  const rdv = (rdvs || []).filter(r => r.day === day && r.status !== "annule" && r.id !== sauf);
+  const plaques = new Set(rdv.map(r => plateKey(r.plate)).filter(Boolean));
+  const enPlace = day === prochain ? (presents || []).filter(o => !plaques.has(plateKey(o.plate))) : [];
+  return { rdv, enPlace, n: rdv.length + enPlace.length };
+}
+const chargeNiv = (n) => n > ATELIER_MAX ? NIV.retard : n === ATELIER_MAX ? NIV.bientot : NIV.ok;
+const chargeTxt = (c) => c.n + " / " + ATELIER_MAX + " véhicule" + (c.n > 1 ? "s" : "") + " client" + (c.n > 1 ? "s" : "") +
+  (c.enPlace.length ? " (" + c.rdv.length + " RDV + " + c.enPlace.length + " encore à l'atelier)" : "");
+
 // Échéances qu'on pourrait programmer : contrôle technique probable de chaque
 // véhicule qui n'en a pas, ventes additionnelles notées sur ses ordres.
 function suggestionsClient(d, ref) {
@@ -579,6 +617,19 @@ function useVehicleHistory(dep) {
   const editVh   = useCallback(async (id, patch) => { const r = await updateVehicleHistory(id, patch); reload(); return r; }, [reload]);
   const removeVh = useCallback(async (id) => { await deleteVehicleHistory(id); reload(); }, [reload]);
   return { vehicleHistory: items, addVh, editVh, removeVh };
+}
+function useAppointments(dep) {
+  const { items, reload } = useCollection(listAppointments, "appointments", dep);
+  const addRdv    = useCallback(async (x) => { const r = await insertAppointment(x); reload(); return r; }, [reload]);
+  const editRdv   = useCallback(async (id, patch) => { const r = await updateAppointment(id, patch); reload(); return r; }, [reload]);
+  const removeRdv = useCallback(async (id) => { await deleteAppointment(id); reload(); }, [reload]);
+  return { rdvs: items, addRdv, editRdv, removeRdv };
+}
+function useClosures(dep) {
+  const { items, reload } = useCollection(listClosures, "workshop_closures", dep);
+  const fermer  = useCallback(async (day, reason, by) => { await closeDay(day, reason, by); reload(); }, [reload]);
+  const rouvrir = useCallback(async (day) => { await reopenDay(day); reload(); }, [reload]);
+  return { fermetures: items, fermer, rouvrir };
 }
 function useReminders(dep) {
   const { items, reload } = useCollection(listReminders, "reminders", dep);
@@ -1038,6 +1089,7 @@ function ResetPasswordView({ notify, onDone }) {
 const NAV = [
   { id:"dashboard", ico:"📊", lbl:"Tableau de bord" },
   { id:"history",   ico:"📋", lbl:"Suivis Atelier" },
+  { id:"planning",  ico:"📅", lbl:"Planning RDV" },
   { id:"orders",    ico:"🔧", lbl:"Ordres de réparation" },
   { id:"estimates", ico:"🧾", lbl:"Estimations" },
   { id:"invoices",  ico:"💶", lbl:"Factures" },
@@ -1078,7 +1130,10 @@ function Sidebar({ user, page, nav, logout, alertes }) {
   );
 }
 
-function Dashboard({ orders, nav, selOrd, photoIdx, echeances, ouvrirClient }) {
+function Dashboard({ orders, nav, selOrd, photoIdx, echeances, ouvrirClient, rdvs, fermetures }) {
+  const ref = aujourdhui(), fermes = new Map((fermetures || []).map(x => [x.day, x.reason]));
+  const presents = vehiculesPresents(orders), prochain = premierJourOuvert(ref, fermes);
+  const prochainsJours = joursAtelier(ref, 4).slice(0, 2);
   const active = orders.filter(o => o.status !== "termine");
   const stats = [
     { l:"En atelier",   v:active.length,                                              c:"#2563eb" },
@@ -1097,6 +1152,27 @@ function Dashboard({ orders, nav, selOrd, photoIdx, echeances, ouvrirClient }) {
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(130px,1fr))", gap:10 }}>
         {stats.map(s => <Crd key={s.l} style={{ textAlign:"center" }}><div style={{ fontSize:34, fontWeight:700, color:s.c }}>{s.v}</div><div style={{ fontSize:12, color:C.sub, marginTop:4 }}>{s.l}</div></Crd>)}
       </div>
+      <Crd>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, flexWrap:"wrap", marginBottom:10 }}>
+          <h3 style={{ color:C.txt, fontSize:16, fontWeight:600, margin:0 }}>📅 Planning de l'atelier</h3>
+          <Btn sm ghost onClick={() => nav("planning")}>Ouvrir le planning</Btn>
+        </div>
+        <RappelPresents presents={presents} ouvrir={o => { selOrd(o.id); nav("order-detail"); }} compact/>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(240px,1fr))", gap:10, marginTop:10 }}>
+          {prochainsJours.map(d => { const ferme = fermes.has(d), c = chargeJour(d, { rdvs, presents, prochain }), niv = chargeNiv(c.n); return (
+            <button key={d} onClick={() => nav("planning")} style={{ textAlign:"left", cursor:"pointer", fontFamily:"inherit", padding:"10px 12px", borderRadius:10,
+              background:ferme ? "#f8fafc" : niv.bg, border:"1px solid " + (ferme ? C.bdr : niv.bd) }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8 }}>
+                <span style={{ fontSize:14, fontWeight:700, color:C.txt }}>{maj1(jourTxt(d))}{d === ref ? " · aujourd'hui" : ""}</span>
+                {ferme ? <span style={{ fontSize:12, color:"#475569", fontWeight:700 }}>🚫 Fermé</span> : <Jauge n={c.n}/>}
+              </div>
+              <div style={{ fontSize:12, color:ferme ? "#475569" : niv.col, fontWeight:600, marginTop:4 }}>
+                {ferme ? (fermes.get(d) || "Atelier fermé") : chargeTxt(c) + (c.n >= ATELIER_MAX ? " — complet" : "")}
+              </div>
+              {!ferme && c.rdv.slice(0, 3).map(r => <div key={r.id} style={{ fontSize:12, color:C.sub, marginTop:2 }}>{r.time ? r.time.replace(":", "h") + " · " : ""}{r.clientName}{r.plate ? " · " + plateFmt(r.plate) : ""}</div>)}
+            </button>); })}
+        </div>
+      </Crd>
       {echeances && echeances.length > 0 && (
         <Crd style={{ borderLeft:"5px solid "+NIV[echeances[0].niv].col }}>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, flexWrap:"wrap", marginBottom:10 }}>
@@ -1299,15 +1375,18 @@ function StudentPicker({ students, selected, onToggle }) {
   );
 }
 
-function NewOrderForm({ addOrder, teachers, students, clients, reloadClients, cVehicles, reloadCVehicles, photosPret, user, nav, selOrd, notify }) {
+function NewOrderForm({ addOrder, teachers, students, clients, reloadClients, cVehicles, reloadCVehicles, photosPret, user, nav, selOrd, notify, presents, prefill, onCreated }) {
+  // Accueil d'un rendez-vous : client, véhicule et motif repris du planning.
+  const pre = prefill || {}, connu = pre.plate ? vehicleOwner(cVehicles, pre.plate) : null;
   const [busy,sbusy] = useState(false);
   // Tour photo : gardé en mémoire jusqu'à la création de l'ordre, puis envoyé.
   const [photos,setPhotosBrut] = useState([]);
   const [envoi,setEnvoi] = useState(null), [echec,setEchec] = useState(null);
   const [f,sf] = useState({
-    plate:"", brand:"", model:"", firstReg:"", km:"", vin:"", vtype:"client",
-    clientName:"", clientPhone:"", clientEmail:"", entryDate:today(), entryTime:tNow(),
-    reason:"", fileRef:"",
+    plate:pre.plate||"", brand:pre.brand||connu?.brand||"", model:pre.model||connu?.model||"",
+    firstReg:connu?.firstReg||"", km:"", vin:connu?.vin||"", vtype:"client",
+    clientName:pre.clientName||"", clientPhone:pre.clientPhone||"", clientEmail:pre.clientEmail||"", entryDate:today(), entryTime:tNow(),
+    reason:pre.reason||"", fileRef:"",
     teacher: user.role==="enseignant"?user.name:"",
     selStu:[], custTask:"", observations:"", additionalSales:"",
     tasks: TASKS0.map(t => ({ id:gid(), label:t, done:false, doneBy:"", doneAt:"", est:"", amount:"" })),
@@ -1361,6 +1440,8 @@ function NewOrderForm({ addOrder, teachers, students, clients, reloadClients, cV
     sbusy(true);
     try {
       const created=await addOrder(o);
+      // Le rendez-vous d'origine passe à « arrivé » et pointe vers l'ordre.
+      if(onCreated){ try{ await onCreated(created); }catch(e){ console.warn("[DMS] rendez-vous non mis à jour", e?.message||e); } }
       // La base clients s'enrichit au fil des ordres (staff uniquement : RLS).
       if(f.vtype==="client"&&f.clientName.trim()&&user.role!=="eleve"){
         const fiche=await rememberClient({ name:f.clientName, phone:f.clientPhone, email:f.clientEmail,
@@ -1412,6 +1493,17 @@ function NewOrderForm({ addOrder, teachers, students, clients, reloadClients, cV
           Habilitations requises : <b>B2VL</b> (chargé de travaux) et <b>BCL</b> (chargé de consignation).
         </div>
       )}
+      {pre.rdvId && (
+        <div style={{ background:"#dbeafe", border:"1px solid #93c5fd", borderRadius:10, padding:"10px 14px", marginBottom:12, fontSize:13, color:"#1e3a8a" }}>
+          📅 <b>Rendez-vous du {jourTxt(pre.rdvDay)}{pre.rdvTime ? " à " + pre.rdvTime.replace(":", "h") : ""}</b> — client, véhicule et motif sont repris du planning ;
+          le rendez-vous passera à « arrivé » à la création de l'ordre.
+        </div>
+      )}
+      {f.vtype==="client" && presents && (() => { const n = presents.length, niv = chargeNiv(n + 1); return (
+        <div style={{ background:niv.bg, border:"1px solid "+niv.bd, borderRadius:10, padding:"10px 14px", marginBottom:12, fontSize:13, color:niv.col, display:"flex", gap:10, alignItems:"center", flexWrap:"wrap" }}>
+          <b>🚗 Véhicules clients déjà à l'atelier : {n} / {ATELIER_MAX}</b> <Jauge n={n}/>
+          <span>{n >= ATELIER_MAX ? "⚠️ Ce véhicule serait le " + (n + 1) + "e : la limite de " + ATELIER_MAX + " véhicules clients est atteinte." : "Ce véhicule sera le " + (n + 1) + "e."}</span>
+        </div>); })()}
       <Crd>
         <SecTitle>🚗 Véhicule</SecTitle>
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))", gap:12 }}>
@@ -2004,7 +2096,7 @@ const IGN_KEY="dms-suggestions-ignorees";
 const lireIgnorees=()=>{ try{ return new Set(JSON.parse(localStorage.getItem(IGN_KEY)||"[]")); }catch{ return new Set(); } };
 
 function FichierClient({ dossiers, sel, setSel, clients, cVehicles, reloadClients, reloadCVehicles, orders,
-  remOps, addVh, editVh, removeVh, user, nav, selOrd, openDoc, notify }) {
+  remOps, addVh, editVh, removeVh, user, nav, selOrd, openDoc, notify, rdvs, prendreRdv }) {
   const { liste, kmDe } = dossiers;
   const [q,sq]=useState(""); const [filtre,sfiltre]=useState("tous");
   const [ech,sech]=useState(null);       // { init } : saisie / modification
@@ -2075,6 +2167,11 @@ function FichierClient({ dossiers, sel, setSel, clients, cVehicles, reloadClient
     const factures=d.docs.filter(x=>x.kind==="invoice");
     const total=factures.reduce((s,x)=>s+docTotals(x).ttc,0);
     const items=chronoItems(d.ors,d.docs,d.hist);
+    const nomCle=c.name.trim().toLowerCase();
+    const sesRdv=(rdvs||[]).filter(r=>r.status==="prevu"&&r.day>=ref&&(r.clientId===c.id||r.clientName.trim().toLowerCase()===nomCle));
+    const unSeul=d.vehicules.length===1?d.vehicules[0]:null;
+    const rdvPour=(extra)=>prendreRdv({clientId:c.id,clientName:c.name,clientPhone:c.phone,clientEmail:c.email,
+      ...(unSeul?{plate:unSeul.plate,brand:unSeul.brand,model:unSeul.model}:{}),...extra});
     return (
       <div style={{maxWidth:960,margin:"0 auto"}}>
         <Btn ghost sm onClick={()=>{setSel(null);sedit(false);}} style={{marginBottom:12}}>← Fichier client</Btn>
@@ -2091,9 +2188,12 @@ function FichierClient({ dossiers, sel, setSel, clients, cVehicles, reloadClient
                 {!c.phone&&!c.email&&<span style={{color:C.mut}}>Aucune coordonnée</span>}
               </div>
               {c.notes&&<div style={{color:C.sub,fontSize:12,marginTop:6,whiteSpace:"pre-wrap"}}>📝 {c.notes}</div>}
+              {sesRdv.map(r=><div key={r.id} style={{fontSize:13,color:"#1d4ed8",fontWeight:600,marginTop:6}}>
+                📅 Rendez-vous : {jourTxt(r.day)}{r.time?" à "+r.time.replace(":","h"):""}{r.plate?" · "+plateFmt(r.plate):""}{r.reason?" — "+r.reason:""}</div>)}
             </div>
             <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
               <Btn sm onClick={()=>sech({init:null})}>⏰ Ajouter une échéance</Btn>
+              {prendreRdv&&<Btn sm ghost onClick={()=>rdvPour({})}>📅 Prendre rendez-vous</Btn>}
               <Btn sm ghost onClick={()=>sedit(e=>!e)}>{edit?"Fermer":"✏️ Coordonnées et véhicules"}</Btn>
               <Btn sm ghost danger onClick={()=>supprimerClient(d)}>🗑 Supprimer le client</Btn>
             </div>
@@ -2151,6 +2251,8 @@ function FichierClient({ dossiers, sel, setSel, clients, cVehicles, reloadClient
                     <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
                       {x.etat.niv!=="ok"&&c.email&&<a href={mailto(c,x)} title="Préparer un courriel de rappel dans votre messagerie"
                         style={{fontSize:12,padding:"5px 10px",borderRadius:7,border:"1px solid "+m.bd,background:"#fff",color:m.col,textDecoration:"none",fontWeight:600}}>✉️ Prévenir</a>}
+                      {prendreRdv&&<Btn sm ghost onClick={()=>{ const v=d.vehicules.find(v=>v.key===plateKey(x.plate));
+                        rdvPour({reason:x.label,...(v?{plate:v.plate,brand:v.brand,model:v.model}:{})}); }}>📅 RDV</Btn>}
                       <Btn sm onClick={()=>sfait(x)}>✓ Réalisé</Btn>
                       <Btn sm ghost onClick={()=>sech({init:x})}>✏️</Btn>
                       <Btn sm ghost danger onClick={()=>supprimer(x)}>🗑</Btn>
@@ -2310,6 +2412,297 @@ function FichierClient({ dossiers, sel, setSel, clients, cVehicles, reloadClient
                 </div>
               </div>); })}
           </div>}
+    </div>
+  );
+}
+
+// ── Planning des rendez-vous ────────────────────────────────────────────────
+
+// Jauge des places du jour : une case par véhicule client (3 au maximum).
+const Jauge=({n})=>{ const niv=chargeNiv(n); return (
+  <span style={{display:"inline-flex",gap:3,alignItems:"center"}} title={n+" / "+ATELIER_MAX}>
+    {Array.from({length:Math.max(ATELIER_MAX,n)}).map((_,i)=>(
+      <span key={i} style={{width:14,height:14,borderRadius:4,background:i<n?(i>=ATELIER_MAX?"#dc2626":niv.col):"#e2e8f0",
+        border:"1px solid "+(i<n?"transparent":C.bdr)}}/>))}
+  </span>); };
+// Rappel : véhicules clients actuellement à l'atelier (OR non terminés).
+function RappelPresents({ presents, ouvrir, compact }) {
+  const n=presents.length, niv=chargeNiv(n);
+  return (
+    <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap",padding:compact?"8px 10px":"10px 14px",borderRadius:10,
+      background:niv.bg,border:"1px solid "+niv.bd,color:niv.col,fontSize:13}}>
+      <span style={{fontWeight:700}}>🚗 Véhicules clients actuellement à l'atelier : {n} / {ATELIER_MAX}</span>
+      <Jauge n={n}/>
+      {n>0&&<span style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+        {presents.map(o=>(
+          <button key={o.id} onClick={ouvrir?()=>ouvrir(o):undefined} title={o.orderNum+(o.clientName?" · "+o.clientName:"")}
+            style={{fontSize:11,fontWeight:700,padding:"2px 8px",borderRadius:6,background:"#fff",border:"1px solid "+niv.bd,color:C.txt,
+              cursor:ouvrir?"pointer":"default",fontFamily:"inherit",letterSpacing:.3}}>{plateFmt(o.plate)}</button>))}
+      </span>}
+      {n>ATELIER_MAX&&<span style={{fontWeight:600}}>— au-delà de la limite de {ATELIER_MAX} par jour</span>}
+    </div>
+  );
+}
+
+// Prise / modification d'un rendez-vous, avec avertissement si le jour est complet.
+function RdvModal({ init, clients, cVehicles, rdvs, presents, fermes, prochain, onSave, onDelete, onClose }) {
+  const ref=aujourdhui();
+  const jours=joursAtelier(ref,40);
+  if(init?.day&&!jours.includes(init.day)) jours.unshift(init.day);
+  const charge=(d)=>chargeJour(d,{rdvs,presents,prochain,sauf:init?.id});
+  const libre=(d)=>!fermes.has(d)&&d>=ref&&charge(d).n<ATELIER_MAX;
+  const [f,sf]=useState(()=>({
+    day:init?.day||jours.find(libre)||jours.find(d=>!fermes.has(d))||"",
+    time:init?.time||"", clientName:init?.clientName||"", clientPhone:init?.clientPhone||"", clientEmail:init?.clientEmail||"",
+    plate:init?.plate?plateFmt(init.plate):"", brand:init?.brand||"", model:init?.model||"", reason:init?.reason||"", note:init?.note||"",
+  }));
+  const [alerte,salerte]=useState(false);
+  const [busy,sbusy]=useState(false);
+  const set=(k,v)=>{ sf(p=>({...p,[k]:v})); if(k==="day") salerte(false); };
+  const cli=findClient(clients,f.clientName);
+  const sesVehicules=cli?clientVehicles(cVehicles,cli.id):[];
+  const prendVehicule=(v)=>sf(p=>({...p,plate:plateFmt(v.plate),brand:v.brand||p.brand,model:v.model||p.model}));
+  const choisirClient=(c)=>{ const vs=clientVehicles(cVehicles,c.id);
+    sf(p=>({...p,clientName:c.name,clientPhone:p.clientPhone||c.phone,clientEmail:p.clientEmail||c.email,
+      ...(vs.length===1&&!p.plate?{plate:plateFmt(vs[0].plate),brand:vs[0].brand||p.brand,model:vs[0].model||p.model}:{})})); };
+  // Une plaque connue retrouve son véhicule et, si besoin, son propriétaire.
+  const setPlate=(val)=>sf(p=>{
+    const n={...p,plate:val.toUpperCase()}, prop=vehicleOwner(cVehicles,val);
+    if(prop){ n.brand=p.brand||prop.brand; n.model=p.model||prop.model;
+      if(!p.clientName.trim()){ const c=(clients||[]).find(x=>x.id===prop.clientId);
+        if(c){ n.clientName=c.name; n.clientPhone=p.clientPhone||c.phone; n.clientEmail=p.clientEmail||c.email; } } }
+    return n;
+  });
+  const ch=f.day?charge(f.day):null, niv=ch?chargeNiv(ch.n):NIV.ok;
+  const nouveauJour=!init?.id||init.day!==f.day;
+  const autres=jours.filter(d=>d!==f.day&&libre(d)).slice(0,4);
+  const enregistrer=async(force)=>{
+    if(!estJourAtelier(f.day)){alert("Les rendez-vous se prennent uniquement le mercredi ou le vendredi.");return;}
+    if(fermes.has(f.day)){alert("L'atelier est fermé ce jour-là"+(fermes.get(f.day)?" ("+fermes.get(f.day)+")":"")+". Choisissez un autre jour.");return;}
+    if(!f.clientName.trim()){alert("Indiquez le nom du client.");return;}
+    if(!force&&nouveauJour&&ch.n>=ATELIER_MAX){salerte(true);return;}
+    sbusy(true);
+    try{ await onSave({...f,clientId:cli?cli.id:null,clientName:f.clientName.trim(),plate:plateKey(f.plate)?plateFmt(f.plate):""}); }
+    finally{ sbusy(false); }
+  };
+  const lbl=(d)=>maj1(jourTxt(d))+(d===ref?" (aujourd'hui)":"")+" — "+(fermes.has(d)?"fermé":(()=>{ const c=charge(d); return c.n>=ATELIER_MAX?"complet ("+c.n+"/"+ATELIER_MAX+")":c.n+"/"+ATELIER_MAX; })());
+  return (
+    <Fond>
+      <h3 style={{color:C.txt,fontSize:18,fontWeight:700,marginBottom:10}}>{init?.id?"✏️ Modifier le rendez-vous":"📅 Nouveau rendez-vous"}</h3>
+      <div style={{marginBottom:14}}><RappelPresents presents={presents} compact/></div>
+      <div style={{marginBottom:8}}>
+        <Sel label="Jour d'atelier * (mercredi ou vendredi)" value={f.day} onChange={v=>set("day",v)} opts={jours.map(d=>({v:d,l:lbl(d)}))}/>
+      </div>
+      {ch&&(
+        <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap",fontSize:12,color:niv.col,fontWeight:600,marginBottom:12}}>
+          <Jauge n={ch.n}/> <span>{maj1(jourTxt(f.day))} : {chargeTxt(ch)}{ch.n>=ATELIER_MAX?" — complet":""}</span>
+        </div>
+      )}
+      <div style={{display:"flex",gap:10,alignItems:"flex-end",flexWrap:"wrap",marginBottom:14}}>
+        <div style={{width:150}}><Inp label="Heure de dépôt" type="time" value={f.time} onChange={v=>set("time",v)}/></div>
+        <div style={{display:"flex",gap:4,flexWrap:"wrap",paddingBottom:4}}>
+          {["08:00","08:30","09:00","13:30"].map(t=><Puce key={t} on={f.time===t} onClick={()=>set("time",t)}>{t.replace(":","h")}</Puce>)}
+        </div>
+      </div>
+      {alerte&&ch&&(
+        <div style={{padding:14,borderRadius:10,background:"#fef2f2",border:"2px solid #f87171",marginBottom:14}}>
+          <div style={{fontSize:14,fontWeight:700,color:"#b91c1c",marginBottom:6}}>⚠️ {maj1(jourTxt(f.day))} est complet</div>
+          <div style={{fontSize:13,color:"#7f1d1d"}}>
+            {ch.n} véhicule{ch.n>1?"s":""} client{ch.n>1?"s":""} sur {ATELIER_MAX} : {ch.rdv.length} rendez-vous
+            {ch.enPlace.length?" et "+ch.enPlace.length+" véhicule"+(ch.enPlace.length>1?"s":"")+" encore à l'atelier ("+ch.enPlace.map(o=>plateFmt(o.plate)).join(", ")+")":""}.
+            {" "}Réserver ce créneau porterait l'atelier à <b>{ch.n+1} véhicules clients</b> ce jour-là, au-delà de la limite de {ATELIER_MAX}.
+          </div>
+          {autres.length>0&&(
+            <div style={{marginTop:10}}>
+              <div style={{fontSize:12,color:"#7f1d1d",marginBottom:6}}>Jours encore disponibles :</div>
+              <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                {autres.map(d=><Puce key={d} onClick={()=>set("day",d)}>📅 {maj1(jourTxt(d))} · {charge(d).n}/{ATELIER_MAX}</Puce>)}
+              </div>
+            </div>
+          )}
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end",flexWrap:"wrap",marginTop:12}}>
+            <Btn sm ghost onClick={()=>salerte(false)}>Revenir</Btn>
+            <Btn sm danger onClick={()=>enregistrer(true)} disabled={busy}>Réserver quand même ({ch.n+1}e véhicule)</Btn>
+          </div>
+        </div>
+      )}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:12,marginBottom:10}}>
+        <ClientPicker clients={clients} name={f.clientName} label="Client *" onName={v=>set("clientName",v)} onPick={choisirClient}/>
+        <Inp label="Téléphone" value={f.clientPhone} onChange={v=>set("clientPhone",v)} placeholder="06 12 34 56 78"/>
+        <Inp label="Adresse électronique" value={f.clientEmail} onChange={v=>set("clientEmail",v)} placeholder="client@exemple.fr"/>
+      </div>
+      {sesVehicules.length>0&&(
+        <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
+          {sesVehicules.map(v=><Puce key={v.id} on={plateKey(v.plate)===plateKey(f.plate)} onClick={()=>prendVehicule(v)}>🚗 {plateFmt(v.plate)}{v.model?" · "+v.model:""}</Puce>)}
+        </div>
+      )}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:12,marginBottom:12}}>
+        <Inp label="Immatriculation" value={f.plate} onChange={setPlate} placeholder="AB-123-CD"/>
+        <Inp label="Marque" value={f.brand} onChange={v=>set("brand",v)} placeholder="Renault"/>
+        <Inp label="Modèle" value={f.model} onChange={v=>set("model",v)} placeholder="Clio"/>
+      </div>
+      <div style={{marginBottom:10}}><TA label="Motif / travaux demandés" value={f.reason} onChange={v=>set("reason",v)} placeholder="Révision, bruit au freinage, contrôle avant CT…" rows={2}/></div>
+      <div style={{marginBottom:18}}><Inp label="Note interne" value={f.note} onChange={v=>set("note",v)} placeholder="Pièces à commander, client à rappeler la veille…"/></div>
+      <div style={{display:"flex",justifyContent:"space-between",gap:10,flexWrap:"wrap"}}>
+        <div>{init?.id&&onDelete&&<Btn ghost danger onClick={onDelete}>🗑 Supprimer</Btn>}</div>
+        <div style={{display:"flex",gap:10}}>
+          <Btn ghost onClick={onClose}>Annuler</Btn>
+          <Btn onClick={()=>enregistrer(false)} disabled={busy||alerte}>{busy?"Enregistrement…":init?.id?"✅ Enregistrer":"✅ Réserver"}</Btn>
+        </div>
+      </div>
+    </Fond>
+  );
+}
+
+const RDV_STATUT = {
+  prevu:  { l:"Prévu",   col:"#1d4ed8", bg:"#dbeafe" },
+  arrive: { l:"Arrivé",  col:"#15803d", bg:"#dcfce7" },
+  annule: { l:"Annulé",  col:"#64748b", bg:"#f1f5f9" },
+};
+
+function PlanningView({ rdvs, fermetures, orders, clients, cVehicles, reloadClients, reloadCVehicles, ops, user, nav, selOrd, accueillir, notify, prefill }) {
+  const isStaff=user.role!=="eleve";
+  const ref=aujourdhui();
+  const fermes=new Map((fermetures||[]).map(x=>[x.day,x.reason]));
+  const presents=vehiculesPresents(orders);
+  const prochain=premierJourOuvert(ref,fermes);
+  const [page,spage]=useState(0);                     // par tranches de 4 semaines
+  const [modal,smodal]=useState(()=>prefill&&isStaff?{init:prefill}:null);
+  const err=(e)=>{ console.error(e); notify("Erreur : "+(e.message||e),"error"); };
+  const ouvrirOr=(o)=>{ selOrd(o.id); nav("order-detail"); };
+  const lundi=plusJours(ref,-((jourSem(ref)+6)%7));
+  const semaines=[0,1,2,3].map(i=>plusJours(lundi,(page*4+i)*7));
+
+  const sauver=async(data)=>{
+    try{
+      // La base clients s'enrichit : nouveau client, véhicule rattaché (sans
+      // retirer un véhicule à un autre client sur une simple prise de rendez-vous).
+      let clientId=data.clientId;
+      const fiche=await rememberClient({name:data.clientName,phone:data.clientPhone,email:data.clientEmail,createdBy:user.name},clients);
+      if(fiche){ clientId=fiche.id; reloadClients(); }
+      const prop=vehicleOwner(cVehicles,data.plate);
+      if(clientId&&plateKey(data.plate)&&(!prop||prop.clientId===clientId)){
+        await rememberVehicle({clientId,plate:data.plate,brand:data.brand,model:data.model},cVehicles); reloadCVehicles(); }
+      const m=modal.init;
+      if(m?.id){ await ops.editRdv(m.id,{...data,clientId}); notify("Rendez-vous modifié"); }
+      else { await ops.addRdv({...data,clientId,status:"prevu",createdBy:user.name});
+        notify("Rendez-vous réservé : "+jourTxt(data.day)+(data.time?" à "+data.time.replace(":","h"):"")); }
+      smodal(null);
+    }catch(e){ err(e); }
+  };
+  const statut=async(r,status,msg)=>{ try{ await ops.editRdv(r.id,{status}); notify(msg); }catch(e){ err(e); } };
+  const annuler=(r)=>{ if(window.confirm("Annuler le rendez-vous de "+r.clientName+" ("+jourTxt(r.day)+") ?\nPensez à prévenir le client.")) statut(r,"annule","Rendez-vous annulé"); };
+  const retablir=(r)=>{
+    const c=chargeJour(r.day,{rdvs,presents,prochain,sauf:r.id});
+    if(c.n>=ATELIER_MAX&&!window.confirm("⚠️ "+maj1(jourTxt(r.day))+" est complet ("+c.n+"/"+ATELIER_MAX+").\nRétablir ce rendez-vous dépassera la limite de "+ATELIER_MAX+" véhicules clients. Continuer ?"))return;
+    statut(r,"prevu","Rendez-vous rétabli");
+  };
+  const supprimer=async(r)=>{
+    if(!window.confirm("Supprimer définitivement le rendez-vous de "+r.clientName+" ("+jourTxt(r.day)+") ?"))return;
+    try{ await ops.removeRdv(r.id); smodal(null); notify("Rendez-vous supprimé"); }catch(e){ err(e); }
+  };
+  const fermer=async(d)=>{
+    const n=rdvs.filter(r=>r.day===d&&r.status==="prevu").length;
+    const motif=window.prompt("Fermer l'atelier le "+jourTxt(d,true)+" ?\nMotif (vacances, examen, sortie…) :"+
+      (n?"\n\n⚠️ "+n+" rendez-vous "+(n>1?"sont prévus":"est prévu")+" ce jour-là : pensez à prévenir "+(n>1?"les clients":"le client")+".":""),"Vacances scolaires");
+    if(motif===null)return;
+    try{ await ops.fermer(d,motif,user.name); notify("Atelier fermé le "+jourTxt(d)); }catch(e){ err(e); }
+  };
+  const rouvrir=async(d)=>{ try{ await ops.rouvrir(d); notify("Atelier rouvert le "+jourTxt(d)); }catch(e){ err(e); } };
+
+  const carteJour=(d)=>{
+    const passe=d<ref, ferme=fermes.has(d), c=chargeJour(d,{rdvs,presents,prochain}), niv=chargeNiv(c.n);
+    const liste=rdvs.filter(r=>r.day===d).sort((a,b)=>(a.status==="annule")-(b.status==="annule")||String(a.time).localeCompare(String(b.time)));
+    return (
+      <div key={d} style={{background:ferme?"#f8fafc":C.card,borderRadius:12,border:"1px solid "+(d===ref?C.acc:C.bdr),
+        borderTop:"5px solid "+(ferme?"#94a3b8":passe?"#cbd5e1":niv.col),padding:14,opacity:passe?.75:1,display:"flex",flexDirection:"column",gap:10}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8,flexWrap:"wrap"}}>
+          <div>
+            <div style={{fontSize:15,fontWeight:700,color:C.txt}}>{maj1(jourTxt(d))}</div>
+            {d===ref&&<span style={{fontSize:11,fontWeight:700,color:C.acc}}>Aujourd'hui</span>}
+            {d===prochain&&d!==ref&&<span style={{fontSize:11,fontWeight:700,color:C.acc}}>Prochain jour d'atelier</span>}
+          </div>
+          {ferme
+            ? <span style={{fontSize:12,fontWeight:700,color:"#475569"}}>🚫 Fermé</span>
+            : passe ? <span style={{fontSize:11,fontWeight:600,color:C.mut}}>Passé</span>
+            : <div style={{textAlign:"right"}}><Jauge n={c.n}/><div style={{fontSize:11,fontWeight:700,color:niv.col,marginTop:3}}>
+                {c.n}/{ATELIER_MAX}{c.n>=ATELIER_MAX?(c.n>ATELIER_MAX?" · dépassé":" · complet"):" · "+(ATELIER_MAX-c.n)+" place"+(ATELIER_MAX-c.n>1?"s":"")}</div></div>}
+        </div>
+        {ferme&&<div style={{fontSize:12,color:"#475569"}}>Atelier fermé{fermes.get(d)?" — "+fermes.get(d):""}</div>}
+        {c.enPlace.map(o=>(
+          <div key={"p"+o.id} onClick={()=>ouvrirOr(o)} style={{cursor:"pointer",padding:"7px 10px",borderRadius:8,background:"#f8fafc",border:"1px dashed "+C.bdr,fontSize:12,color:C.sub}}>
+            🔧 <b>Déjà à l'atelier</b> · {o.orderNum} <PlaqueChip p={o.plate}/> {o.clientName&&<span>· {o.clientName}</span>}
+          </div>
+        ))}
+        {liste.map(r=>{ const st=RDV_STATUT[r.status]||RDV_STATUT.prevu, o=r.orderId&&orders.find(x=>x.id===r.orderId); return (
+          <div key={r.id} style={{padding:"8px 10px",borderRadius:8,border:"1px solid "+C.bdr,background:r.status==="annule"?"#f8fafc":"#fff",opacity:r.status==="annule"?.65:1}}>
+            <div style={{display:"flex",justifyContent:"space-between",gap:8,alignItems:"flex-start"}}>
+              <div style={{minWidth:0,fontSize:13,color:C.txt,textDecoration:r.status==="annule"?"line-through":"none"}}>
+                <b>{r.time?r.time.replace(":","h"):"—"}</b> · <b>{r.clientName}</b>{r.plate&&<PlaqueChip p={r.plate}/>}
+                {(r.brand||r.model)&&<div style={{fontSize:12,color:C.sub}}>{[r.brand,r.model].filter(Boolean).join(" ")}</div>}
+                {r.reason&&<div style={{fontSize:12,color:C.sub,whiteSpace:"pre-wrap"}}>📝 {r.reason}</div>}
+                {isStaff&&r.note&&<div style={{fontSize:11,color:C.mut}}>🔒 {r.note}</div>}
+                {r.clientPhone&&<a href={"tel:"+r.clientPhone.replace(/\s/g,"")} style={{fontSize:12,color:"#1d4ed8",textDecoration:"none"}}>📞 {r.clientPhone}</a>}
+              </div>
+              <span style={{fontSize:11,fontWeight:700,padding:"2px 8px",borderRadius:999,background:st.bg,color:st.col,whiteSpace:"nowrap"}}>{st.l}</span>
+            </div>
+            {(isStaff||o)&&(
+              <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:8}}>
+                {o&&<Btn sm ghost onClick={()=>ouvrirOr(o)}>🔧 {o.orderNum}</Btn>}
+                {isStaff&&r.status==="prevu"&&<>
+                  <Btn sm onClick={()=>accueillir(r)}>🔧 Accueillir : créer l'OR</Btn>
+                  <Btn sm ghost onClick={()=>smodal({init:r})}>✏️</Btn>
+                  <Btn sm ghost onClick={()=>annuler(r)}>✕ Annuler</Btn>
+                </>}
+                {isStaff&&r.status==="annule"&&<>
+                  <Btn sm ghost onClick={()=>retablir(r)}>↺ Rétablir</Btn>
+                  <Btn sm ghost danger onClick={()=>supprimer(r)}>🗑</Btn>
+                </>}
+              </div>
+            )}
+          </div>); })}
+        {!ferme&&liste.length===0&&c.enPlace.length===0&&<div style={{fontSize:12,color:C.mut}}>Aucun rendez-vous.</div>}
+        {isStaff&&!passe&&(
+          <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:"auto",paddingTop:4}}>
+            {!ferme&&<Btn sm ghost={c.n>=ATELIER_MAX} onClick={()=>smodal({init:{day:d}})}>{c.n>=ATELIER_MAX?"⚠️ Réserver (complet)":"+ Réserver"}</Btn>}
+            {ferme
+              ? <Btn sm ghost onClick={()=>rouvrir(d)}>↺ Rouvrir l'atelier</Btn>
+              : <Btn sm ghost onClick={()=>fermer(d)}>🚫 Fermer ce jour</Btn>}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div style={{maxWidth:1000,margin:"0 auto"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:12}}>
+        <h2 style={{color:C.txt,fontSize:20,fontWeight:700,margin:0}}>📅 Planning des rendez-vous</h2>
+        {isStaff&&<Btn onClick={()=>smodal({init:null})}>➕ Prendre un rendez-vous</Btn>}
+      </div>
+      <div style={{marginBottom:10}}><RappelPresents presents={presents} ouvrir={ouvrirOr}/></div>
+      <p style={{color:C.mut,fontSize:12,margin:"0 0 14px"}}>
+        Atelier ouvert aux véhicules clients le <b>mercredi</b> et le <b>vendredi</b>, {ATELIER_MAX} véhicules au maximum par jour.
+        Les véhicules encore à l'atelier (OR non terminé) occupent une place le prochain jour d'atelier.
+      </p>
+      <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginBottom:14}}>
+        <Btn sm ghost onClick={()=>spage(p=>p-1)}>← 4 semaines</Btn>
+        {page!==0&&<Btn sm ghost onClick={()=>spage(0)}>Aujourd'hui</Btn>}
+        <Btn sm ghost onClick={()=>spage(p=>p+1)}>4 semaines →</Btn>
+        <span style={{fontSize:12,color:C.mut}}>du {fD(semaines[0])} au {fD(plusJours(semaines[3],6))}</span>
+      </div>
+      <div style={{display:"flex",flexDirection:"column",gap:16}}>
+        {semaines.map(l=>(
+          <div key={l}>
+            <div style={{fontSize:12,fontWeight:700,color:C.sub,textTransform:"uppercase",letterSpacing:.5,marginBottom:6}}>Semaine du {jourTxt(l)}</div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:12}}>
+              {ATELIER_JOURS.map(j=>carteJour(plusJours(l,(j+6)%7)))}
+            </div>
+          </div>
+        ))}
+      </div>
+      {modal&&<RdvModal init={modal.init} clients={clients} cVehicles={cVehicles} rdvs={rdvs} presents={presents} fermes={fermes} prochain={prochain}
+        onSave={sauver} onDelete={modal.init?.id?()=>supprimer(modal.init):null} onClose={()=>smodal(null)}/>}
     </div>
   );
 }
@@ -3766,6 +4159,11 @@ export default function DMSApp() {
   const photoIdx = usePhotoIndex(cu?.id);
   const { clientVehicles: cVehicles, reloadClientVehicles } = useClientVehicles(cu?.id);
   const { reminders, addRem, editRem, removeRem } = useReminders(cu?.id);
+  const { rdvs, addRdv, editRdv, removeRdv } = useAppointments(cu?.id);
+  const { fermetures, fermer, rouvrir } = useClosures(cu?.id);
+  const rdvOps = useMemo(() => ({ addRdv, editRdv, removeRdv, fermer, rouvrir }), [addRdv, editRdv, removeRdv, fermer, rouvrir]);
+  const [rdvPrefill,srp]=useState(null);      // rendez-vous à prendre (depuis le fichier client)
+  const [orderPrefill,sop]=useState(null);    // ordre à créer (accueil d'un rendez-vous)
   const remOps = useMemo(() => ({ addRem, editRem, removeRem }), [addRem, editRem, removeRem]);
   // Dossiers du fichier client (état des échéances), partagés par le menu, le tableau de bord et la fiche.
   const dossiers = useMemo(() => dossiersClients({ clients, cVehicles, orders, documents, history: vehicleHistory, reminders }, aujourdhui()),
@@ -3785,7 +4183,10 @@ export default function DMSApp() {
   const notify=useCallback((msg,type)=>{sn({msg,type:type||"success"});setTimeout(()=>sn(null),3500);},[]);
   const reloadStaff=useCallback(()=>{ listStaff().then(setStaff).catch(e=>console.error(e)); },[]);
   useEffect(()=>{ if(cu) reloadStaff(); },[cu,reloadStaff]);
-  const nav=p=>{sp(p);sso(false);if(p==="clients")sfc(null);};
+  const nav=p=>{sp(p);sso(false);if(p==="clients")sfc(null);if(p==="planning")srp(null);if(p==="new-order")sop(null);};
+  const prendreRdv=x=>{srp(x);sp("planning");sso(false);};
+  const accueillir=r=>{sop({rdvId:r.id,rdvDay:r.day,rdvTime:r.time,clientName:r.clientName,clientPhone:r.clientPhone,clientEmail:r.clientEmail,
+    plate:r.plate,brand:r.brand,model:r.model,reason:r.reason});sp("new-order");sso(false);};
   const ouvrirClient=id=>{sfc(id);sp("clients");sso(false);};
   const logout=async()=>{ await supabase.auth.signOut(); sp("dashboard"); ssi(null); };
   if(!ready)return(<div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:C.bg,color:C.sub,fontFamily:"system-ui,sans-serif"}}>Chargement…</div>);
@@ -3794,11 +4195,14 @@ export default function DMSApp() {
   const isStaff=cu.role!=="eleve"; const isAdmin=cu.role==="admin";
   const rs=ROLE_STYLE[cu.role]||{bg:"#e2e8f0",cl:C.sub};
   const renderPage=()=>{
-    if(page==="dashboard")    return<Dashboard orders={orders} nav={nav} selOrd={ssi} photoIdx={photoIdx.parOrdre} echeances={isStaff?aRelancer:null} ouvrirClient={ouvrirClient}/>;
-    if(page==="clients")      return isStaff?<FichierClient dossiers={dossiers} sel={ficheClient} setSel={sfc} clients={clients} cVehicles={cVehicles} reloadClients={reloadClients} reloadCVehicles={reloadClientVehicles} orders={orders} remOps={remOps} addVh={addVh} editVh={editVh} removeVh={removeVh} user={cu} nav={nav} selOrd={ssi} openDoc={openDoc} notify={notify}/>:null;
+    if(page==="dashboard")    return<Dashboard orders={orders} nav={nav} selOrd={ssi} photoIdx={photoIdx.parOrdre} echeances={isStaff?aRelancer:null} ouvrirClient={ouvrirClient} rdvs={rdvs} fermetures={fermetures}/>;
+    if(page==="planning")     return <PlanningView key={rdvPrefill?"rdv-prerempli":"planning"} rdvs={rdvs} fermetures={fermetures} orders={orders} clients={clients} cVehicles={cVehicles} reloadClients={reloadClients} reloadCVehicles={reloadClientVehicles} ops={rdvOps} user={cu} nav={nav} selOrd={ssi} accueillir={accueillir} notify={notify} prefill={rdvPrefill}/>;
+    if(page==="clients")      return isStaff?<FichierClient dossiers={dossiers} sel={ficheClient} setSel={sfc} clients={clients} cVehicles={cVehicles} reloadClients={reloadClients} reloadCVehicles={reloadClientVehicles} orders={orders} remOps={remOps} addVh={addVh} editVh={editVh} removeVh={removeVh} user={cu} nav={nav} selOrd={ssi} openDoc={openDoc} notify={notify} rdvs={rdvs} prendreRdv={prendreRdv}/>:null;
     if(page==="orders")       return<OrdersList orders={orders} nav={nav} selOrd={ssi} photoIdx={photoIdx.parOrdre}/>;
     if(page==="vehicles")     return <VehiclesView orders={orders} documents={documents} vehicleHistory={vehicleHistory} clients={clients} cVehicles={cVehicles} user={cu} nav={nav} selOrd={ssi} openDoc={openDoc} addVh={addVh} editVh={editVh} removeVh={removeVh} notify={notify}/>;
-    if(page==="new-order")    return <NewOrderForm addOrder={addOrder} teachers={staff} students={students} clients={clients} reloadClients={reloadClients} cVehicles={cVehicles} reloadCVehicles={reloadClientVehicles} photosPret={photoIdx.pret} user={cu} nav={nav} selOrd={ssi} notify={notify}/>;
+    if(page==="new-order")    return <NewOrderForm addOrder={addOrder} teachers={staff} students={students} clients={clients} reloadClients={reloadClients} cVehicles={cVehicles} reloadCVehicles={reloadClientVehicles} photosPret={photoIdx.pret} user={cu} nav={nav} selOrd={ssi} notify={notify}
+      presents={vehiculesPresents(orders)} prefill={orderPrefill}
+      onCreated={orderPrefill?.rdvId?(o=>editRdv(orderPrefill.rdvId,{status:"arrive",orderId:o.id})):null}/>;
     if(page==="order-detail") return selId?<OrderDetail orderId={selId} orders={orders} documents={documents} editOrder={editOrder} removeOrder={removeOrder} isAdmin={isAdmin} user={cu} nav={nav} notify={notify} students={students} photosPret={photoIdx.pret}/>:null;
     if(page==="estimates")    return <DocsList kind="estimate" documents={documents} openDoc={openDoc} newDoc={()=>newDoc("estimate")}/>;
     if(page==="invoices")     return <DocsList kind="invoice" documents={documents} openDoc={openDoc} newDoc={()=>newDoc("invoice")}/>;

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { supabase } from "./supabase";
 import {
   listOrders, insertOrder, updateOrder as dbUpdateOrder, deleteOrder,
@@ -9,6 +9,7 @@ import {
   countInspectionsBy,
   listTariffs, insertTariff, updateTariff, deleteTariff,
   listVehicleHistory, insertVehicleHistory, updateVehicleHistory, deleteVehicleHistory,
+  listReminders, insertReminder, updateReminder, deleteReminder,
   sendDocsByMail,
   listClients, insertClient, updateClient, deleteClient, rememberClient,
   listClientVehicles, deleteClientVehicle, rememberVehicle,
@@ -340,6 +341,166 @@ const vehicleOwner = (list, plate) => {
   return k ? (list || []).find(v => plateKey(v.plate) === k) : undefined;
 };
 
+// ── Fichier client : échéances et travaux à prévoir ─────────────────────────
+// Intervalles proposés à la saisie (modifiables) : ordres de grandeur, à adapter
+// aux préconisations du constructeur. `vh` : nature reportée dans l'historique
+// d'entretien du véhicule quand l'échéance est réalisée.
+const ECH_TYPES = [
+  { v:"controle_technique", l:"Contrôle technique",       ico:"✅", mois:24,   km:null,   vh:"controle"   },
+  { v:"revision",           l:"Entretien / révision",     ico:"🛠", mois:12,   km:15000,  vh:"entretien"  },
+  { v:"courroie",           l:"Courroie de distribution", ico:"⚙️", mois:72,   km:120000, vh:"entretien"  },
+  { v:"liquide_frein",      l:"Liquide de frein",         ico:"💧", mois:24,   km:null,   vh:"entretien"  },
+  { v:"climatisation",      l:"Climatisation",            ico:"❄️", mois:24,   km:null,   vh:"entretien"  },
+  { v:"freins",             l:"Freinage",                 ico:"🛑", mois:null, km:null,   vh:"reparation" },
+  { v:"pneus",              l:"Pneumatiques",             ico:"🛞", mois:null, km:null,   vh:"pneus"      },
+  { v:"autre",              l:"Autre",                    ico:"📌", mois:null, km:null,   vh:"autre"      },
+];
+const echType = (v) => ECH_TYPES.find(t => t.v === v) || ECH_TYPES[ECH_TYPES.length - 1];
+// Une échéance passe à l'orange à moins de 30 jours ou de 1 500 km, au rouge une fois dépassée.
+const ECH_JOURS = 30, ECH_KM = 1500;
+const NIV = {
+  retard:  { l:"En retard",   ico:"🔴", col:"#b91c1c", bg:"#fef2f2", bd:"#fca5a5", r:0 },
+  bientot: { l:"Bientôt",     ico:"🟠", col:"#c2410c", bg:"#fff7ed", bd:"#fdba74", r:1 },
+  ok:      { l:"À jour",      ico:"🟢", col:"#15803d", bg:"#f0fdf4", bd:"#86efac", r:2 },
+  aucun:   { l:"Sans rappel", ico:"⚪", col:"#64748b", bg:"#ffffff", bd:C.bdr,     r:3 },
+};
+// Dates « AAAA-MM-JJ » en heure locale : `today()` (UTC) retarde d'un jour après minuit.
+const isoJour = (d) => d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+const aujourdhui = () => isoJour(new Date());
+const jourNum = (iso) => { const [y, m, d] = String(iso).slice(0, 10).split("-").map(Number); return Date.UTC(y, m - 1, d) / 864e5; };
+const ecartJours = (de, a) => Math.round(jourNum(a) - jourNum(de));
+// + n mois, en restant sur le dernier jour du mois si besoin (31/01 + 1 mois → 28/02).
+const plusMois = (iso, n) => {
+  const [y, m, d] = String(iso).slice(0, 10).split("-").map(Number);
+  const t = new Date(Date.UTC(y, m - 1 + n, 1));
+  const fin = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth() + 1, 0)).getUTCDate();
+  return t.getUTCFullYear() + "-" + String(t.getUTCMonth() + 1).padStart(2, "0") + "-" + String(Math.min(d, fin)).padStart(2, "0");
+};
+const estDate = (s) => /^\d{4}-\d\d-\d\d/.test(String(s || ""));
+const kmNum = (v) => { const n = parseInt(String(v ?? "").replace(/\D/g, ""), 10); return Number.isFinite(n) && n > 0 ? n : null; };
+const dureeTxt = (j) => j < 60 ? j + " j" : j < 730 ? Math.round(j / 30.44) + " mois" : Math.round(j / 365.25) + " ans";
+
+// Relevés kilométriques d'un véhicule (ordres, documents, historique, échéances
+// réalisées), du plus ancien au plus récent.
+function relevesKm(k, { orders, documents, history, reminders }) {
+  const r = [];
+  (orders || []).forEach(o => { if (plateKey(o.plate) === k) r.push({ d: o.entryDate || (o.createdAt || "").slice(0, 10), km: kmNum(o.km) }); });
+  (documents || []).forEach(x => { if (plateKey(x.plate) === k) r.push({ d: (x.createdAt || "").slice(0, 10), km: kmNum(x.km) }); });
+  (history || []).forEach(h => { if (plateKey(h.plate) === k) r.push({ d: h.date || (h.createdAt || "").slice(0, 10), km: kmNum(h.km) }); });
+  (reminders || []).forEach(x => { if (x.done && plateKey(x.plate) === k) r.push({ d: x.doneAt, km: kmNum(x.doneKm) }); });
+  // Un compteur ne recule pas : un relevé inférieur à un relevé antérieur est une
+  // erreur de saisie (« 1 », un zéro oublié…) et ne doit pas faire croire l'échéance lointaine.
+  let max = 0;
+  return r.filter(x => x.km && estDate(x.d)).sort((a, b) => a.d.localeCompare(b.d) || a.km - b.km)
+    .filter(x => x.km >= max && (max = x.km, true));
+}
+// Kilométrage du jour : le dernier relevé, prolongé au rythme observé entre le
+// premier et le dernier relevé quand ils sont espacés d'au moins deux mois.
+// Sans cela, une échéance au kilométrage ne bougerait qu'au passage à l'atelier.
+function kmDuJour(rel, ref) {
+  if (!rel.length) return null;
+  const pre = rel[0], der = rel[rel.length - 1];
+  const jours = ecartJours(pre.d, der.d);
+  const parJour = jours >= 60 ? (der.km - pre.km) / jours : 0;
+  const rythme = parJour > 0 && parJour < 300 ? parJour : 0;      // > 300 km/j : relevé erroné
+  const ecart = Math.max(0, ecartJours(der.d, ref));
+  return { km: Math.round(der.km + rythme * ecart), releve: der.km, date: der.d,
+           parAn: rythme ? Math.round(rythme * 365) : 0, estime: rythme > 0 && ecart > 0 };
+}
+// État d'une échéance à la date `ref` : niv (retard | bientot | ok), texte et
+// rang de tri (jours restants, le kilométrage converti au rythme du véhicule).
+function etatEch(x, kmJour, ref) {
+  const j = estDate(x.dueDate) ? ecartJours(ref, x.dueDate) : null;
+  const kmR = x.dueKm && kmJour ? x.dueKm - kmJour.km : null;
+  const env = kmJour && kmJour.estime ? "≈ " : "";
+  const parts = [];
+  if (j != null) parts.push(j < 0 ? "dépassée de " + dureeTxt(-j) : j === 0 ? "aujourd'hui" : "dans " + dureeTxt(j));
+  if (kmR != null) parts.push(kmR < 0 ? "dépassée de " + env + kmTxt(-kmR) + " km" : kmR === 0 ? "kilométrage atteint" : "encore " + env + kmTxt(kmR) + " km");
+  const retard = (j != null && j < 0) || (kmR != null && kmR <= 0);
+  const bientot = (j != null && j <= ECH_JOURS) || (kmR != null && kmR <= ECH_KM);
+  const parJourKm = kmJour && kmJour.parAn ? kmJour.parAn / 365 : 1000 / 30;
+  const rang = Math.min(j != null ? j : Infinity, kmR != null ? kmR / parJourKm : Infinity);
+  return { niv: retard ? "retard" : bientot ? "bientot" : "ok", rang,
+           txt: parts.join(" · ") || (x.dueKm ? "kilométrage du véhicule inconnu" : "") };
+}
+// Prochain contrôle technique probable : 2 ans après le dernier contrôle connu,
+// sinon 4 ans après la 1re mise en circulation, puis tous les 2 ans.
+function ctProbable(firstReg, dernierCT, ref) {
+  if (estDate(dernierCT)) return plusMois(dernierCT, 24);
+  if (!estDate(firstReg)) return "";
+  for (let n = 48; n < 48 + 24 * 40; n += 24) { const d = plusMois(firstReg, n); if (ecartJours(ref, d) >= 0) return d; }
+  return "";
+}
+// Dossier de chaque client : véhicules (rattachés ou vus sur ses ordres),
+// ordres, documents, historique, échéances avec leur état, état global = le pire.
+// Un ordre ou un document est à lui s'il porte son nom, ou l'une de ses plaques
+// sans nommer un autre client de la base.
+function dossiersClients({ clients, cVehicles, orders, documents, history, reminders }, ref) {
+  const cle = (s) => String(s || "").trim().toLowerCase();
+  const noms = new Set((clients || []).map(c => cle(c.name)));
+  const fiches = new Map(buildVehicles(orders, documents, history).map(v => [v.key, v]));
+  const kmCache = new Map();
+  const kmDe = (plate) => {
+    const k = plateKey(plate);
+    if (!k) return null;
+    if (!kmCache.has(k)) kmCache.set(k, kmDuJour(relevesKm(k, { orders, documents, history, reminders }), ref));
+    return kmCache.get(k);
+  };
+  const liste = (clients || []).map(c => {
+    const n = cle(c.name);
+    const cvs = clientVehicles(cVehicles, c.id);
+    const plaques = new Set(cvs.map(v => plateKey(v.plate)).filter(Boolean));
+    const aLui = (nom, plate) => cle(nom) === n || (plaques.has(plateKey(plate)) && !(cle(nom) && noms.has(cle(nom))));
+    const ors = (orders || []).filter(o => o.vtype !== "peda" && aLui(o.clientName, o.plate));
+    const docs = (documents || []).filter(d => aLui(d.clientName, d.plate));
+    [...ors, ...docs].forEach(x => { const k = plateKey(x.plate); if (k) plaques.add(k); });
+    const hist = (history || []).filter(h => plaques.has(plateKey(h.plate)));
+    const ech = (reminders || []).filter(x => x.clientId === c.id);
+    const vehicules = [...plaques].map(k => {
+      const cv = cvs.find(v => plateKey(v.plate) === k), f = fiches.get(k) || {};
+      const dernierOr = ors.filter(o => plateKey(o.plate) === k && mecOf(o))
+        .sort((a, b) => String(b.entryDate).localeCompare(String(a.entryDate)))[0];
+      return { key: k, plate: plateFmt((cv && cv.plate) || f.plate || k),
+               brand: (cv && cv.brand) || f.brand || "", model: (cv && cv.model) || f.model || "",
+               vin: (cv && cv.vin) || f.vin || "", firstReg: (cv && cv.firstReg) || (dernierOr ? mecOf(dernierOr) : "") };
+    });
+    const actives = ech.filter(x => !x.done).map(x => ({ ...x, etat: etatEch(x, kmDe(x.plate), ref) }))
+      .sort((a, b) => NIV[a.etat.niv].r - NIV[b.etat.niv].r || a.etat.rang - b.etat.rang);
+    const faites = ech.filter(x => x.done).sort((a, b) => String(b.doneAt).localeCompare(String(a.doneAt)));
+    const dates = [...ors.map(o => o.entryDate), ...docs.map(d => (d.createdAt || "").slice(0, 10)), ...hist.map(h => h.date)].filter(estDate).sort();
+    return { c, vehicules, ors, docs, hist, ech, actives, faites,
+             niv: actives.length ? actives[0].etat.niv : "aucun", top: actives[0] || null, dernier: dates[dates.length - 1] || "" };
+  });
+  return { liste, kmDe };
+}
+// Échéances qu'on pourrait programmer : contrôle technique probable de chaque
+// véhicule qui n'en a pas, ventes additionnelles notées sur ses ordres.
+function suggestionsClient(d, ref) {
+  const s = [];
+  d.vehicules.forEach(v => {
+    if (d.actives.some(x => x.kind === "controle_technique" && plateKey(x.plate) === v.key)) return;
+    const faits = [...d.hist.filter(h => h.kind === "controle" && plateKey(h.plate) === v.key).map(h => h.date),
+                   ...d.faites.filter(x => x.kind === "controle_technique" && plateKey(x.plate) === v.key).map(x => x.doneAt)]
+      .filter(estDate).sort();
+    const dernier = faits[faits.length - 1] || "";
+    const date = ctProbable(v.firstReg, dernier, ref);
+    if (!date) return;
+    s.push({ id: "ct-" + v.key, ico: "✅", titre: "Contrôle technique " + v.plate + " — vers le " + fD(date),
+      detail: dernier ? "Deux ans après le dernier contrôle connu (" + fD(dernier) + ")."
+                      : "Estimé d'après la 1re mise en circulation (" + fD(v.firstReg) + ") : à vérifier sur le dernier procès-verbal.",
+      init: { kind: "controle_technique", label: "Contrôle technique", plate: v.plate, dueDate: date, dueKm: "", note: "" } });
+  });
+  d.ors.forEach(o => {
+    const t = String(o.additionalSales || "").trim();
+    if (!t || t === "—" || d.ech.some(x => (x.note || "").includes(o.orderNum))) return;
+    const l1 = t.split(/\n/)[0].trim().slice(0, 80);
+    s.push({ id: "vs-" + o.id, ico: "🛒", titre: l1,
+      detail: "Vente additionnelle notée sur " + o.orderNum + " (" + fD(o.entryDate) + ", " + plateFmt(o.plate) + ").",
+      init: { kind: "autre", label: l1, plate: plateFmt(o.plate), dueDate: plusMois(ref, 1), dueKm: "", note: "Suite à " + o.orderNum + " : " + t } });
+  });
+  return s;
+}
+
 // ── Données Supabase (remplace localStorage) ──
 // Collection générique : fetch initial + abonnement realtime (refetch sur
 // changement) pour synchroniser tous les postes connectés.
@@ -418,6 +579,13 @@ function useVehicleHistory(dep) {
   const editVh   = useCallback(async (id, patch) => { const r = await updateVehicleHistory(id, patch); reload(); return r; }, [reload]);
   const removeVh = useCallback(async (id) => { await deleteVehicleHistory(id); reload(); }, [reload]);
   return { vehicleHistory: items, addVh, editVh, removeVh };
+}
+function useReminders(dep) {
+  const { items, reload } = useCollection(listReminders, "reminders", dep);
+  const addRem    = useCallback(async (x) => { const r = await insertReminder(x); reload(); return r; }, [reload]);
+  const editRem   = useCallback(async (id, patch) => { const r = await updateReminder(id, patch); reload(); return r; }, [reload]);
+  const removeRem = useCallback(async (id) => { await deleteReminder(id); reload(); }, [reload]);
+  return { reminders: items, addRem, editRem, removeRem };
 }
 function useDocuments(dep) {
   const { items, loading, reload } = useCollection(listDocuments, "documents", dep);
@@ -874,10 +1042,11 @@ const NAV = [
   { id:"estimates", ico:"🧾", lbl:"Estimations" },
   { id:"invoices",  ico:"💶", lbl:"Factures" },
   { id:"vehicles",  ico:"🚙", lbl:"Historique véhicules" },
+  { id:"clients",   ico:"📇", lbl:"Fichier client", staff:true },
   { id:"admin",     ico:"⚙️", lbl:"Administration", staff:true },
   { id:"account",   ico:"👤", lbl:"Mon compte", staff:true },
 ];
-function Sidebar({ user, page, nav, logout }) {
+function Sidebar({ user, page, nav, logout, alertes }) {
   const isStaff = user.role !== "eleve";
   const rs = ROLE_STYLE[user.role]||{ bg:"#e2e8f0", cl:C.sub };
   return (
@@ -891,6 +1060,12 @@ function Sidebar({ user, page, nav, logout }) {
         {NAV.filter(n => !n.staff||isStaff).map(n => (
           <button key={n.id} onClick={() => nav(n.id)} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px", borderRadius:8, border:"none", cursor:"pointer", textAlign:"left", fontSize:14, fontWeight:page===n.id?600:400, background:page===n.id?C.acc:"transparent", color:page===n.id?"#fff":C.sub }}>
             <span>{n.ico}</span>{n.lbl}
+            {n.id==="clients"&&alertes&&(alertes.r>0||alertes.o>0)&&(
+              <span style={{marginLeft:"auto",display:"flex",gap:4}}>
+                {alertes.r>0&&<span title="Clients en retard" style={{background:"#dc2626",color:"#fff",borderRadius:999,fontSize:11,fontWeight:700,padding:"1px 7px"}}>{alertes.r}</span>}
+                {alertes.o>0&&<span title="Échéances proches" style={{background:"#f97316",color:"#fff",borderRadius:999,fontSize:11,fontWeight:700,padding:"1px 7px"}}>{alertes.o}</span>}
+              </span>
+            )}
           </button>
         ))}
       </nav>
@@ -903,7 +1078,7 @@ function Sidebar({ user, page, nav, logout }) {
   );
 }
 
-function Dashboard({ orders, nav, selOrd, photoIdx }) {
+function Dashboard({ orders, nav, selOrd, photoIdx, echeances, ouvrirClient }) {
   const active = orders.filter(o => o.status !== "termine");
   const stats = [
     { l:"En atelier",   v:active.length,                                              c:"#2563eb" },
@@ -922,6 +1097,23 @@ function Dashboard({ orders, nav, selOrd, photoIdx }) {
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(130px,1fr))", gap:10 }}>
         {stats.map(s => <Crd key={s.l} style={{ textAlign:"center" }}><div style={{ fontSize:34, fontWeight:700, color:s.c }}>{s.v}</div><div style={{ fontSize:12, color:C.sub, marginTop:4 }}>{s.l}</div></Crd>)}
       </div>
+      {echeances && echeances.length > 0 && (
+        <Crd style={{ borderLeft:"5px solid "+NIV[echeances[0].niv].col }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, flexWrap:"wrap", marginBottom:10 }}>
+            <h3 style={{ color:C.txt, fontSize:16, fontWeight:600, margin:0 }}>⏰ Échéances clients</h3>
+            <Btn sm ghost onClick={() => nav("clients")}>📇 Fichier client</Btn>
+          </div>
+          <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+            {echeances.slice(0, 6).map(d => { const m = NIV[d.niv]; return (
+              <button key={d.c.id} onClick={() => ouvrirClient(d.c.id)} style={{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap", textAlign:"left", cursor:"pointer",
+                padding:"8px 10px", borderRadius:8, border:"1px solid "+m.bd, background:m.bg, fontFamily:"inherit" }}>
+                <span style={{ fontSize:13, fontWeight:700, color:C.txt }}>{m.ico} {d.c.name}</span>
+                <span style={{ fontSize:12, color:m.col, fontWeight:600 }}>{echType(d.top.kind).ico} {d.top.label}{d.top.plate ? " · " + plateFmt(d.top.plate) : ""}{d.top.etat.txt ? " — " + d.top.etat.txt : ""}</span>
+              </button>); })}
+            {echeances.length > 6 && <span style={{ fontSize:12, color:C.mut }}>+ {echeances.length - 6} autre(s) client(s) à relancer</span>}
+          </div>
+        </Crd>
+      )}
       <div>
         <h3 style={{ color:C.txt, fontSize:16, fontWeight:600, marginBottom:12 }}>🚗 Véhicules en atelier</h3>
         {active.length===0
@@ -1451,6 +1643,96 @@ function VhModal({ init, plate, user, onSave, onClose }) {
   );
 }
 
+// Chronologie des interventions d'un véhicule ou d'un client : ordres de
+// réparation, devis / factures, interventions saisies à la main.
+const chronoItems=(ors,docs,hist)=>[
+  ...(ors||[]).map(o=>({t:"or",id:o.id,date:o.entryDate||(o.createdAt||"").slice(0,10),o})),
+  ...(docs||[]).map(d=>({t:d.kind,id:d.id,date:(d.createdAt||"").slice(0,10),d})),
+  ...(hist||[]).map(h=>({t:"vh",id:h.id,date:h.date||(h.createdAt||"").slice(0,10),h})),
+].sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+const PlaqueChip=({p})=>p?<span style={{fontSize:11,fontWeight:700,padding:"2px 8px",borderRadius:6,background:"#f1f5f9",border:"1px solid "+C.bdr,color:C.txt,letterSpacing:.4,marginLeft:6}}>{plateFmt(p)}</span>:null;
+// `plaques` : affiche l'immatriculation sur chaque ligne (client à plusieurs véhicules).
+// `onProgrammer(o)` : propose de programmer un rappel depuis les ventes additionnelles d'un OR.
+function Chronologie({ items, vide, isStaff, nav, selOrd, openDoc, onEditVh, onDelVh, plaques, onProgrammer }) {
+  if(items.length===0) return <Crd><p style={{color:C.mut,fontSize:13,margin:0}}>{vide}</p></Crd>;
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:10}}>
+      {items.map(it=>{
+        if(it.t==="or"){ const o=it.o, faits=(o.tasks||[]).filter(t=>t.done), tot=(o.tasks||[]).length, vs=String(o.additionalSales||"").trim();
+          return (
+            <Crd key={"or"+it.id} style={{borderLeft:"4px solid #3b82f6"}}>
+              <div style={{display:"flex",justifyContent:"space-between",gap:10,flexWrap:"wrap",alignItems:"center"}}>
+                <div>
+                  <span style={{fontSize:11,fontWeight:700,padding:"2px 8px",borderRadius:999,background:"#dbeafe",color:"#1d4ed8"}}>🔧 Ordre de réparation</span>
+                  <span style={{color:C.mut,fontSize:12,marginLeft:8}}>{fD(it.date)}</span>
+                  {plaques&&<PlaqueChip p={o.plate}/>}
+                  {o.ev&&<span style={{fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:999,background:"#fef9c3",color:"#a16207",marginLeft:6}}>⚡ VE/VH</span>}
+                </div>
+                <Btn sm ghost onClick={()=>{selOrd(o.id);nav("order-detail");}}>Ouvrir</Btn>
+              </div>
+              <div style={{color:C.txt,fontSize:14,fontWeight:600,marginTop:8}}>{o.orderNum}</div>
+              {o.reason&&<div style={{color:C.sub,fontSize:13,marginTop:2}}>{o.reason}</div>}
+              {faits.length>0&&(
+                <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:8}}>
+                  {faits.slice(0,8).map(t=><span key={t.id||t.label} style={{fontSize:11,padding:"2px 8px",borderRadius:6,background:"#ecfdf5",color:"#047857"}}>✓ {t.label}</span>)}
+                  {faits.length>8&&<span style={{fontSize:11,color:C.mut}}>+ {faits.length-8} autre(s)</span>}
+                </div>
+              )}
+              <div style={{color:C.mut,fontSize:12,marginTop:6}}>
+                <Badge status={o.status}/> <span style={{marginLeft:8}}>{faits.length}/{tot} travaux réalisés</span>
+                {o.km&&<span style={{marginLeft:8}}>· {kmTxt(o.km)} km</span>}
+              </div>
+              {vs&&(
+                <div style={{marginTop:8,padding:"8px 10px",borderRadius:8,background:"#fffbeb",border:"1px dashed #fcd34d",display:"flex",gap:10,alignItems:"center",justifyContent:"space-between",flexWrap:"wrap"}}>
+                  <span style={{fontSize:12,color:"#92400e",whiteSpace:"pre-wrap",flex:"1 1 200px"}}>🛒 <b>À prévoir :</b> {vs}</span>
+                  {onProgrammer&&<Btn sm ghost onClick={()=>onProgrammer(o)}>⏰ Programmer un rappel</Btn>}
+                </div>
+              )}
+            </Crd>
+          );
+        }
+        if(it.t==="estimate"||it.t==="invoice"){ const d=it.d, est=it.t==="estimate";
+          return (
+            <Crd key={"d"+it.id} style={{borderLeft:"4px solid "+(est?"#a78bfa":"#059669")}}>
+              <div style={{display:"flex",justifyContent:"space-between",gap:10,flexWrap:"wrap",alignItems:"center"}}>
+                <div>
+                  <span style={{fontSize:11,fontWeight:700,padding:"2px 8px",borderRadius:999,background:est?"#ede9fe":"#dcfce7",color:est?"#6d28d9":"#15803d"}}>{est?"🧾 Estimation":"💶 Facture"}</span>
+                  <span style={{color:C.mut,fontSize:12,marginLeft:8}}>{fD(it.date)}</span>
+                  {plaques&&<PlaqueChip p={d.plate}/>}
+                </div>
+                <Btn sm ghost onClick={()=>openDoc(d.id,d.kind)}>Ouvrir</Btn>
+              </div>
+              <div style={{color:C.txt,fontSize:14,fontWeight:600,marginTop:8}}>{d.docNum} · {eur(docTotals(d).ttc)}</div>
+              <div style={{color:C.mut,fontSize:12,marginTop:2}}>{(d.items||[]).length} ligne(s) · {d.createdBy}</div>
+            </Crd>
+          );
+        }
+        const h=it.h, kd=vhKind(h.kind);
+        return (
+          <Crd key={"h"+it.id} style={{borderLeft:"4px solid "+kd.col}}>
+            <div style={{display:"flex",justifyContent:"space-between",gap:10,flexWrap:"wrap",alignItems:"center"}}>
+              <div>
+                <span style={{fontSize:11,fontWeight:700,padding:"2px 8px",borderRadius:999,background:kd.bg,color:kd.col}}>{kd.ico} {kd.l}</span>
+                <span style={{color:C.mut,fontSize:12,marginLeft:8}}>{fD(it.date)}</span>
+                {plaques&&<PlaqueChip p={h.plate}/>}
+              </div>
+              {isStaff&&onEditVh&&(
+                <div style={{display:"flex",gap:6}}>
+                  <Btn sm ghost onClick={()=>onEditVh(h)}>✏️ Modifier</Btn>
+                  <Btn sm ghost danger onClick={()=>onDelVh(h)}>🗑</Btn>
+                </div>
+              )}
+            </div>
+            <div style={{color:C.txt,fontSize:14,fontWeight:600,marginTop:8}}>{h.label}</div>
+            {h.details&&<div style={{color:C.sub,fontSize:13,marginTop:2,whiteSpace:"pre-wrap"}}>{h.details}</div>}
+            <div style={{color:C.mut,fontSize:12,marginTop:6}}>{h.km?kmTxt(h.km)+" km · ":""}saisi par {h.createdBy||"—"}</div>
+          </Crd>
+        );
+      })}
+    </div>
+  );
+}
+
 function VehiclesView({ orders, documents, vehicleHistory, clients, cVehicles, user, nav, selOrd, openDoc, addVh, editVh, removeVh, notify }) {
   const proprio=(plaque)=>{ const v=vehicleOwner(cVehicles,plaque); return v&&(clients||[]).find(c=>c.id===v.clientId); };
   const [q,sq]=useState(""); const [sel,ssel]=useState(null); const [modal,smodal]=useState(null);
@@ -1484,11 +1766,8 @@ function VehiclesView({ orders, documents, vehicleHistory, clients, cVehicles, u
   // ── Fiche d'un véhicule ──
   if(v){
     const k=v.key;
-    const items=[
-      ...orders.filter(o=>plateKey(o.plate)===k).map(o=>({t:"or",id:o.id,date:o.entryDate||(o.createdAt||"").slice(0,10),o})),
-      ...documents.filter(d=>plateKey(d.plate)===k).map(d=>({t:d.kind,id:d.id,date:(d.createdAt||"").slice(0,10),d})),
-      ...vehicleHistory.filter(h=>plateKey(h.plate)===k).map(h=>({t:"vh",id:h.id,date:h.date||(h.createdAt||"").slice(0,10),h})),
-    ].sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+    const items=chronoItems(orders.filter(o=>plateKey(o.plate)===k), documents.filter(d=>plateKey(d.plate)===k),
+      vehicleHistory.filter(h=>plateKey(h.plate)===k));
     return (
       <div style={{maxWidth:900,margin:"0 auto"}}>
         <Btn ghost sm onClick={()=>ssel(null)} style={{marginBottom:12}}>← Tous les véhicules</Btn>
@@ -1509,67 +1788,8 @@ function VehiclesView({ orders, documents, vehicleHistory, clients, cVehicles, u
             <span style={{color:C.mut}}>{v.nOrders} OR · {v.nDocs} document(s) · {v.nNotes} saisie(s)</span>
           </div>
         </Crd>
-        {items.length===0
-          ? <Crd><p style={{color:C.mut,fontSize:13,margin:0}}>Aucune intervention enregistrée pour ce véhicule.</p></Crd>
-          : <div style={{display:"flex",flexDirection:"column",gap:10}}>
-              {items.map(it=>{
-                if(it.t==="or"){ const o=it.o, dn=(o.tasks||[]).filter(t=>t.done).length, tot=(o.tasks||[]).length;
-                  return (
-                    <Crd key={"or"+it.id} style={{borderLeft:"4px solid #3b82f6"}}>
-                      <div style={{display:"flex",justifyContent:"space-between",gap:10,flexWrap:"wrap",alignItems:"center"}}>
-                        <div>
-                          <span style={{fontSize:11,fontWeight:700,padding:"2px 8px",borderRadius:999,background:"#dbeafe",color:"#1d4ed8"}}>🔧 Ordre de réparation</span>
-                          <span style={{color:C.mut,fontSize:12,marginLeft:8}}>{fD(it.date)}</span>
-                          {o.ev&&<span style={{fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:999,background:"#fef9c3",color:"#a16207",marginLeft:6}}>⚡ VE/VH</span>}
-                        </div>
-                        <Btn sm ghost onClick={()=>{selOrd(o.id);nav("order-detail");}}>Ouvrir</Btn>
-                      </div>
-                      <div style={{color:C.txt,fontSize:14,fontWeight:600,marginTop:8}}>{o.orderNum}</div>
-                      {o.reason&&<div style={{color:C.sub,fontSize:13,marginTop:2}}>{o.reason}</div>}
-                      <div style={{color:C.mut,fontSize:12,marginTop:6}}>
-                        <Badge status={o.status}/> <span style={{marginLeft:8}}>{dn}/{tot} travaux réalisés</span>
-                        {o.km&&<span style={{marginLeft:8}}>· {kmTxt(o.km)} km</span>}
-                      </div>
-                    </Crd>
-                  );
-                }
-                if(it.t==="estimate"||it.t==="invoice"){ const d=it.d, est=it.t==="estimate";
-                  return (
-                    <Crd key={"d"+it.id} style={{borderLeft:"4px solid "+(est?"#a78bfa":"#059669")}}>
-                      <div style={{display:"flex",justifyContent:"space-between",gap:10,flexWrap:"wrap",alignItems:"center"}}>
-                        <div>
-                          <span style={{fontSize:11,fontWeight:700,padding:"2px 8px",borderRadius:999,background:est?"#ede9fe":"#dcfce7",color:est?"#6d28d9":"#15803d"}}>{est?"🧾 Estimation":"💶 Facture"}</span>
-                          <span style={{color:C.mut,fontSize:12,marginLeft:8}}>{fD(it.date)}</span>
-                        </div>
-                        <Btn sm ghost onClick={()=>openDoc(d.id,d.kind)}>Ouvrir</Btn>
-                      </div>
-                      <div style={{color:C.txt,fontSize:14,fontWeight:600,marginTop:8}}>{d.docNum} · {eur(docTotals(d).ttc)}</div>
-                      <div style={{color:C.mut,fontSize:12,marginTop:2}}>{(d.items||[]).length} ligne(s) · {d.createdBy}</div>
-                    </Crd>
-                  );
-                }
-                const h=it.h, kd=vhKind(h.kind);
-                return (
-                  <Crd key={"h"+it.id} style={{borderLeft:"4px solid "+kd.col}}>
-                    <div style={{display:"flex",justifyContent:"space-between",gap:10,flexWrap:"wrap",alignItems:"center"}}>
-                      <div>
-                        <span style={{fontSize:11,fontWeight:700,padding:"2px 8px",borderRadius:999,background:kd.bg,color:kd.col}}>{kd.ico} {kd.l}</span>
-                        <span style={{color:C.mut,fontSize:12,marginLeft:8}}>{fD(it.date)}</span>
-                      </div>
-                      {isStaff&&(
-                        <div style={{display:"flex",gap:6}}>
-                          <Btn sm ghost onClick={()=>smodal({edit:h})}>✏️ Modifier</Btn>
-                          <Btn sm ghost danger onClick={()=>del(h)}>🗑</Btn>
-                        </div>
-                      )}
-                    </div>
-                    <div style={{color:C.txt,fontSize:14,fontWeight:600,marginTop:8}}>{h.label}</div>
-                    {h.details&&<div style={{color:C.sub,fontSize:13,marginTop:2,whiteSpace:"pre-wrap"}}>{h.details}</div>}
-                    <div style={{color:C.mut,fontSize:12,marginTop:6}}>{h.km?kmTxt(h.km)+" km · ":""}saisi par {h.createdBy||"—"}</div>
-                  </Crd>
-                );
-              })}
-            </div>}
+        <Chronologie items={items} vide="Aucune intervention enregistrée pour ce véhicule." isStaff={isStaff}
+          nav={nav} selOrd={selOrd} openDoc={openDoc} onEditVh={h=>smodal({edit:h})} onDelVh={del}/>
         {modal&&<VhModal init={modal.edit} plate={modal.plate} user={user} onSave={save} onClose={()=>smodal(null)}/>}
       </div>
     );
@@ -1641,6 +1861,430 @@ function VehiclesView({ orders, documents, vehicleHistory, clients, cVehicles, u
   );
 }
 
+
+// ── Fichier client ──────────────────────────────────────────────────────────
+
+const Fond=({children})=>(
+  <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.75)",zIndex:50,display:"flex",alignItems:"center",justifyContent:"center",padding:16,overflowY:"auto"}}>
+    <div style={{background:C.card,borderRadius:16,padding:22,width:"100%",maxWidth:560,border:"1px solid "+C.bdr,maxHeight:"92vh",overflowY:"auto"}}>{children}</div>
+  </div>
+);
+const Puce=({children,onClick,on})=>(
+  <button type="button" onClick={onClick} style={{fontSize:12,padding:"4px 10px",borderRadius:999,cursor:"pointer",fontFamily:"inherit",
+    border:"1px solid "+(on?C.acc:C.bdr),background:on?"#dbeafe":"#f8fafc",color:on?"#1d4ed8":C.sub}}>{children}</button>
+);
+
+// Saisie / modification d'une échéance.
+function EchModal({ init, client, vehicules, kmDe, onSave, onClose }) {
+  const ref=aujourdhui();
+  const [f,sf]=useState(()=>({
+    kind:init?.kind||"revision", label:init?.label??echType(init?.kind||"revision").l,
+    plate:init?.plate!=null?plateFmt(init.plate):(vehicules.length===1?vehicules[0].plate:""),
+    dueDate:init?.dueDate||"", dueKm:init?.dueKm!=null&&init?.dueKm!==""?String(init.dueKm):"", note:init?.note||"",
+  }));
+  const [busy,sbusy]=useState(false);
+  const set=(k,v)=>sf(p=>({...p,[k]:v}));
+  const choisirType=(v)=>sf(p=>({...p,kind:v,
+    label:(!p.label.trim()||p.label===echType(p.kind).l)?echType(v).l:p.label}));
+  const t=echType(f.kind), kj=f.plate?kmDe(f.plate):null;
+  const ok=async()=>{
+    if(!f.label.trim()){alert("Indiquez l'intitulé de l'échéance.");return;}
+    if(!f.dueDate&&!kmNum(f.dueKm)){alert("Indiquez une date d'échéance, un kilométrage, ou les deux.");return;}
+    if(kmNum(f.dueKm)&&!plateKey(f.plate)){alert("Une échéance au kilométrage se rapporte à un véhicule : choisissez-le.");return;}
+    sbusy(true);
+    try{ await onSave({...f,label:f.label.trim(),plate:plateKey(f.plate)?plateFmt(f.plate):"",dueKm:kmNum(f.dueKm)}); }
+    finally{ sbusy(false); }
+  };
+  const opts=[{v:"",l:"— Aucun véhicule en particulier —"},
+    ...vehicules.map(v=>({v:v.plate,l:v.plate+([v.brand,v.model].filter(Boolean).length?" · "+[v.brand,v.model].filter(Boolean).join(" "):"")}))];
+  if(f.plate&&!opts.some(o=>plateKey(o.v)===plateKey(f.plate))) opts.push({v:f.plate,l:f.plate});
+  return (
+    <Fond>
+      <h3 style={{color:C.txt,fontSize:18,fontWeight:700,marginBottom:4}}>{init?.id?"✏️ Modifier l'échéance":"⏰ Nouvelle échéance"}</h3>
+      <p style={{color:C.sub,fontSize:13,marginBottom:14}}>{client.name} — la fiche passe à l'orange à moins de {ECH_JOURS} jours ou {kmTxt(ECH_KM)} km de l'échéance, au rouge une fois dépassée.</p>
+      <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:12}}>
+        {ECH_TYPES.map(x=><Puce key={x.v} on={f.kind===x.v} onClick={()=>choisirType(x.v)}>{x.ico} {x.l}</Puce>)}
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:12,marginBottom:12}}>
+        <Inp label="Intitulé *" value={f.label} onChange={v=>set("label",v)} placeholder="Courroie de distribution à prévoir"/>
+        <Sel label="Véhicule" value={opts.find(o=>plateKey(o.v)===plateKey(f.plate))?.v??""} onChange={v=>set("plate",v)} opts={opts}/>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:12,marginBottom:6}}>
+        <div>
+          <Inp label="Échéance (date)" type="date" value={f.dueDate} onChange={v=>set("dueDate",v)}/>
+          <div style={{display:"flex",gap:4,flexWrap:"wrap",marginTop:6}}>
+            {[[1,"1 mois"],[6,"6 mois"],[12,"1 an"],[24,"2 ans"]].map(([n,l])=><Puce key={n} on={f.dueDate===plusMois(ref,n)} onClick={()=>set("dueDate",plusMois(ref,n))}>dans {l}</Puce>)}
+            {t.mois&&![1,6,12,24].includes(t.mois)&&<Puce on={f.dueDate===plusMois(ref,t.mois)} onClick={()=>set("dueDate",plusMois(ref,t.mois))}>dans {t.mois%12?t.mois+" mois":t.mois/12+" ans"}</Puce>}
+          </div>
+        </div>
+        <div>
+          <Inp label="Échéance (kilométrage)" value={f.dueKm} onChange={v=>set("dueKm",v.replace(/[^\d\s]/g,""))} placeholder={kj?"ex. "+kmTxt(kj.km+(t.km||15000)):"120000"}/>
+          {kj?(
+            <div style={{display:"flex",gap:4,flexWrap:"wrap",marginTop:6}}>
+              {[...new Set([10000,15000,30000,t.km].filter(Boolean))].map(n=><Puce key={n} on={kmNum(f.dueKm)===kj.km+n} onClick={()=>set("dueKm",String(kj.km+n))}>+{kmTxt(n)}</Puce>)}
+            </div>
+          ):null}
+          <div style={{fontSize:11,color:C.mut,marginTop:6}}>
+            {kj?(kj.estime?"Aujourd'hui ≈ "+kmTxt(kj.km)+" km (estimé)":"Dernier relevé : "+kmTxt(kj.km)+" km le "+fD(kj.date))
+               :f.plate?"Kilométrage inconnu pour ce véhicule.":"Choisissez un véhicule pour une échéance au kilométrage."}
+          </div>
+        </div>
+      </div>
+      {(t.mois||t.km)&&<p style={{fontSize:11,color:C.mut,margin:"0 0 12px"}}>Repère habituel : {[t.mois&&("tous les "+(t.mois%12?t.mois+" mois":t.mois/12>1?t.mois/12+" ans":"ans")),t.km&&("tous les "+kmTxt(t.km)+" km")].filter(Boolean).join(" ou ")} — à adapter aux préconisations du constructeur.</p>}
+      <div style={{marginBottom:18}}>
+        <TA label="Note" value={f.note} onChange={v=>set("note",v)} placeholder="Pièces à commander, devis remis, à rappeler en septembre…" rows={2}/>
+      </div>
+      <div style={{display:"flex",justifyContent:"flex-end",gap:10}}>
+        <Btn ghost onClick={onClose}>Annuler</Btn>
+        <Btn onClick={ok} disabled={busy}>{busy?"Enregistrement…":"✅ Enregistrer"}</Btn>
+      </div>
+    </Fond>
+  );
+}
+
+// Échéance réalisée : on la clôt, on la reporte dans l'historique du véhicule,
+// et on programme la suivante d'après l'intervalle habituel.
+function FaitModal({ x, kmJour, onConfirm, onClose }) {
+  const t=echType(x.kind);
+  const [doneAt,sda]=useState(aujourdhui());
+  const [doneKm,sdk]=useState("");
+  const [histo,sh]=useState(!!plateKey(x.plate));
+  const [suite,ss]=useState(!!(t.mois||t.km));
+  const [nd,snd]=useState(null), [nk,snk]=useState(null);       // null : calculé
+  const [busy,sbusy]=useState(false);
+  const autoDate=t.mois&&estDate(doneAt)?plusMois(doneAt,t.mois):"";
+  const autoKm=t.km&&kmNum(doneKm)?String(kmNum(doneKm)+t.km):"";
+  const nDate=nd??autoDate, nKm=nk??autoKm;
+  const ok=async()=>{
+    if(!estDate(doneAt)){alert("Indiquez la date de réalisation.");return;}
+    if(suite&&!nDate&&!kmNum(nKm)){alert("Indiquez la date ou le kilométrage de la prochaine échéance (ou décochez-la).");return;}
+    sbusy(true);
+    try{ await onConfirm({ doneAt, doneKm:kmNum(doneKm), histo:histo&&!!plateKey(x.plate),
+      suivant:suite?{ dueDate:nDate||"", dueKm:kmNum(nKm) }:null }); }
+    finally{ sbusy(false); }
+  };
+  const cb={display:"flex",gap:10,alignItems:"flex-start",padding:"10px 12px",borderRadius:10,border:"1px solid "+C.bdr,background:"#f8fafc",cursor:"pointer",fontSize:13,color:C.txt};
+  return (
+    <Fond>
+      <h3 style={{color:C.txt,fontSize:18,fontWeight:700,marginBottom:4}}>✓ {x.label} — réalisé</h3>
+      <p style={{color:C.sub,fontSize:13,marginBottom:14}}>{x.plate?plateFmt(x.plate)+" · ":""}échéance du {x.dueDate?fD(x.dueDate):"—"}{x.dueKm?" / "+kmTxt(x.dueKm)+" km":""}</p>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))",gap:12,marginBottom:12}}>
+        <Inp label="Réalisé le" type="date" value={doneAt} onChange={sda}/>
+        <Inp label="Kilométrage relevé" value={doneKm} onChange={v=>sdk(v.replace(/[^\d\s]/g,""))} placeholder={kmJour?"≈ "+kmTxt(kmJour.km):"92000"}/>
+      </div>
+      <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:18}}>
+        {plateKey(x.plate)&&(
+          <label style={cb}><input type="checkbox" checked={histo} onChange={e=>sh(e.target.checked)} style={{marginTop:2}}/>
+            <span>Consigner dans l'<b>historique d'entretien</b> de {plateFmt(x.plate)}</span></label>
+        )}
+        <label style={cb}><input type="checkbox" checked={suite} onChange={e=>ss(e.target.checked)} style={{marginTop:2}}/>
+          <span style={{flex:1}}>Programmer la <b>prochaine échéance</b>
+            {(t.mois||t.km)?<span style={{color:C.mut}}> (habituellement {[t.mois&&(t.mois%12?t.mois+" mois":t.mois/12>1?t.mois/12+" ans":"1 an"),t.km&&kmTxt(t.km)+" km"].filter(Boolean).join(" ou ")} plus tard)</span>:null}
+            {suite&&(
+              <span style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:10,marginTop:10}}>
+                <Inp label="Prochaine date" type="date" value={nDate} onChange={snd}/>
+                <Inp label="Prochain kilométrage" value={nKm} onChange={v=>snk(v.replace(/[^\d\s]/g,""))} placeholder={t.km?"relevé + "+kmTxt(t.km):"—"}/>
+              </span>
+            )}
+          </span></label>
+      </div>
+      <div style={{display:"flex",justifyContent:"flex-end",gap:10}}>
+        <Btn ghost onClick={onClose}>Annuler</Btn>
+        <Btn onClick={ok} disabled={busy}>{busy?"Enregistrement…":"✓ Valider"}</Btn>
+      </div>
+    </Fond>
+  );
+}
+
+const NivPill=({niv,sm})=>{ const n=NIV[niv]; return (
+  <span style={{fontSize:sm?11:12,fontWeight:700,padding:sm?"2px 8px":"3px 10px",borderRadius:999,background:niv==="aucun"?"#f1f5f9":n.bg,color:n.col,border:"1px solid "+n.bd,whiteSpace:"nowrap"}}>{n.ico} {n.l}</span>
+); };
+// Suggestions écartées par l'utilisateur : simple confort, propre à ce navigateur.
+const IGN_KEY="dms-suggestions-ignorees";
+const lireIgnorees=()=>{ try{ return new Set(JSON.parse(localStorage.getItem(IGN_KEY)||"[]")); }catch{ return new Set(); } };
+
+function FichierClient({ dossiers, sel, setSel, clients, cVehicles, reloadClients, reloadCVehicles, orders,
+  remOps, addVh, editVh, removeVh, user, nav, selOrd, openDoc, notify }) {
+  const { liste, kmDe } = dossiers;
+  const [q,sq]=useState(""); const [filtre,sfiltre]=useState("tous");
+  const [ech,sech]=useState(null);       // { init } : saisie / modification
+  const [fait,sfait]=useState(null);     // échéance en cours de clôture
+  const [vh,svh]=useState(null);         // intervention de l'historique à modifier
+  const [edit,sedit]=useState(false);    // coordonnées et véhicules
+  const [neuf,sneuf]=useState(null);     // nouveau client
+  const [vuesFaites,svf]=useState(false);
+  const [ign,sign]=useState(lireIgnorees);
+  const ref=aujourdhui();
+  const act=actionsClient({ clients, cVehicles, reloadClients, reloadCVehicles, notify });
+  const err=(e)=>{ console.error(e); notify("Erreur : "+(e.message||e),"error"); };
+  const d=sel?liste.find(x=>x.c.id===sel):null;
+
+  const enregistrer=async(data)=>{
+    try{
+      if(ech.init?.id){ await remOps.editRem(ech.init.id,data); notify("Échéance modifiée"); }
+      else { await remOps.addRem({...data,clientId:d.c.id,createdBy:user.name}); notify("Échéance programmée"); }
+      sech(null);
+    }catch(e){ err(e); }
+  };
+  const supprimer=async(x)=>{
+    if(!window.confirm("Supprimer l'échéance « "+x.label+" » ?"))return;
+    try{ await remOps.removeRem(x.id); notify("Échéance supprimée"); }catch(e){ err(e); }
+  };
+  const realiser=async(x,r)=>{
+    try{
+      await remOps.editRem(x.id,{done:true,doneAt:r.doneAt,doneKm:r.doneKm,doneBy:user.name});
+      if(r.histo){
+        const v=d.vehicules.find(v=>v.key===plateKey(x.plate))||{};
+        await addVh({plate:plateFmt(x.plate),brand:v.brand||"",model:v.model||"",vin:v.vin||"",date:r.doneAt,
+          km:r.doneKm?String(r.doneKm):"",kind:echType(x.kind).vh,label:x.label,details:x.note||"",createdBy:user.name});
+      }
+      if(r.suivant) await remOps.addRem({clientId:x.clientId,plate:x.plate,kind:x.kind,label:x.label,
+        dueDate:r.suivant.dueDate,dueKm:r.suivant.dueKm,note:"",createdBy:user.name});
+      sfait(null);
+      notify(r.suivant?"Échéance réalisée — la suivante est programmée":"Échéance réalisée");
+    }catch(e){ err(e); }
+  };
+  const rouvrir=async(x)=>{
+    try{ await remOps.editRem(x.id,{done:false,doneAt:"",doneKm:"",doneBy:""}); notify("Échéance rouverte"); }catch(e){ err(e); }
+  };
+  const ignorer=(id)=>{
+    const s=new Set(ign); s.add(id); sign(s);
+    try{ localStorage.setItem(IGN_KEY,JSON.stringify([...s])); }catch{ /* stockage indisponible */ }
+  };
+  const saveVh=async(data)=>{ try{ await editVh(vh.id,data); notify("Intervention modifiée"); svh(null); }catch(e){ err(e); } };
+  const delVh=async(h)=>{
+    if(!window.confirm("Supprimer « "+h.label+" » de l'historique ?"))return;
+    try{ await removeVh(h.id); notify("Intervention supprimée"); }catch(e){ err(e); }
+  };
+  // Message prérempli dans la messagerie de l'enseignant (rien n'est envoyé automatiquement).
+  const mailto=(c,x)=>"mailto:"+encodeURIComponent(c.email)+"?subject="+encodeURIComponent("Rappel d'entretien – "+x.label+(x.plate?" – "+plateFmt(x.plate):""))+
+    "&body="+encodeURIComponent("Bonjour,\n\nNous vous rappelons l'échéance suivante pour votre véhicule"+(x.plate?" "+plateFmt(x.plate):"")+" :\n"+
+    "– "+x.label+(x.dueDate?", prévue le "+fD(x.dueDate):"")+(x.dueKm?(x.dueDate?" ou":", prévue")+" à "+kmTxt(x.dueKm)+" km":"")+".\n\n"+
+    "N'hésitez pas à nous contacter pour convenir d'un rendez-vous à l'atelier.\n\nCordialement,\n"+user.name+"\nAtelier BTS Maintenance des Véhicules – Lycée Joseph Gallieni");
+
+  // ── Fiche d'un client ──
+  if(d){
+    const c=d.c, n=NIV[d.niv];
+    const sugg=suggestionsClient(d,ref).filter(s=>!ign.has(c.id+":"+s.id));
+    const factures=d.docs.filter(x=>x.kind==="invoice");
+    const total=factures.reduce((s,x)=>s+docTotals(x).ttc,0);
+    const items=chronoItems(d.ors,d.docs,d.hist);
+    return (
+      <div style={{maxWidth:960,margin:"0 auto"}}>
+        <Btn ghost sm onClick={()=>{setSel(null);sedit(false);}} style={{marginBottom:12}}>← Fichier client</Btn>
+        <Crd style={{marginBottom:14,borderTop:"5px solid "+n.col}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12,flexWrap:"wrap"}}>
+            <div style={{minWidth:0}}>
+              <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+                <h2 style={{color:C.txt,fontSize:22,fontWeight:700,margin:0}}>📇 {c.name}</h2>
+                <NivPill niv={d.niv}/>
+              </div>
+              <div style={{display:"flex",gap:14,flexWrap:"wrap",marginTop:6,fontSize:13}}>
+                {c.phone&&<a href={"tel:"+c.phone.replace(/\s/g,"")} style={{color:"#1d4ed8",textDecoration:"none"}}>📞 {c.phone}</a>}
+                {c.email&&<a href={"mailto:"+c.email} style={{color:"#1d4ed8",textDecoration:"none"}}>✉️ {c.email}</a>}
+                {!c.phone&&!c.email&&<span style={{color:C.mut}}>Aucune coordonnée</span>}
+              </div>
+              {c.notes&&<div style={{color:C.sub,fontSize:12,marginTop:6,whiteSpace:"pre-wrap"}}>📝 {c.notes}</div>}
+            </div>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+              <Btn sm onClick={()=>sech({init:null})}>⏰ Ajouter une échéance</Btn>
+              <Btn sm ghost onClick={()=>sedit(e=>!e)}>{edit?"Fermer":"✏️ Coordonnées et véhicules"}</Btn>
+            </div>
+          </div>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:12}}>
+            {d.vehicules.length===0
+              ? <span style={{fontSize:12,color:C.mut}}>Aucun véhicule connu.</span>
+              : d.vehicules.map(v=>{ const kj=kmDe(v.plate); return (
+                  <span key={v.key} style={{display:"inline-flex",flexDirection:"column",padding:"6px 10px",borderRadius:8,background:"#f8fafc",border:"1px solid "+C.bdr}}>
+                    <span style={{fontSize:13,fontWeight:700,letterSpacing:.4,color:C.txt}}>🚗 {v.plate}<span style={{fontWeight:400,color:C.sub}}>{[v.brand,v.model].filter(Boolean).length?" · "+[v.brand,v.model].filter(Boolean).join(" "):""}</span></span>
+                    <span style={{fontSize:11,color:C.mut}}>{[v.firstReg&&"MEC "+fD(v.firstReg),kj&&((kj.estime?"≈ ":"")+kmTxt(kj.km)+" km"+(kj.estime?" estimés":""))].filter(Boolean).join(" · ")||"—"}</span>
+                  </span>); })}
+          </div>
+          <div style={{display:"flex",gap:16,flexWrap:"wrap",marginTop:12,paddingTop:12,borderTop:"1px solid "+C.bdr,fontSize:13,color:C.sub}}>
+            <span>Dernier passage : <b style={{color:C.txt}}>{d.dernier?fD(d.dernier):"—"}</b></span>
+            <span>{d.ors.length} OR · {d.docs.filter(x=>x.kind==="estimate").length} estimation(s) · {factures.length} facture(s)</span>
+            {factures.length>0&&<span>Facturé : <b style={{color:C.txt}}>{eur(total)}</b></span>}
+          </div>
+        </Crd>
+        {edit&&(
+          <div style={{marginBottom:14}}>
+            <ClientRow c={c} orders={orders} vehicles={clientVehicles(cVehicles,c.id)}
+              onSave={patch=>act.saveClient(c,patch)} onDelete={async x=>{ if(await act.delClient(x)) setSel(null); }}
+              onAddVehicle={act.addVehicle} onDelVehicle={act.delVehicle}/>
+          </div>
+        )}
+
+        <Crd style={{marginBottom:14}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:12}}>
+            <h3 style={{color:C.txt,fontSize:16,fontWeight:700,margin:0}}>⏰ Échéances et travaux à prévoir</h3>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+              {["controle_technique","revision","courroie"].map(k=>{ const t=echType(k); return (
+                <Puce key={k} onClick={()=>{ const s=k==="controle_technique"&&sugg.find(z=>z.id.startsWith("ct-"));
+                  sech({init:s?s.init:{kind:k,label:t.l,dueDate:t.mois?plusMois(ref,t.mois):""}}); }}>+ {t.ico} {t.l}</Puce>); })}
+              <Puce onClick={()=>sech({init:null})}>+ Autre…</Puce>
+            </div>
+          </div>
+          {d.actives.length===0
+            ? <p style={{color:C.mut,fontSize:13,margin:"0 0 4px"}}>Aucune échéance programmée pour ce client.</p>
+            : <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                {d.actives.map(x=>{ const m=NIV[x.etat.niv], t=echType(x.kind), kj=x.plate?kmDe(x.plate):null; return (
+                  <div key={x.id} style={{display:"flex",gap:12,alignItems:"flex-start",flexWrap:"wrap",padding:"10px 12px",borderRadius:10,background:m.bg,border:"1px solid "+m.bd,borderLeft:"6px solid "+m.col}}>
+                    <div style={{fontSize:22,lineHeight:1.2}}>{t.ico}</div>
+                    <div style={{flex:"1 1 220px",minWidth:0}}>
+                      <div style={{fontWeight:700,fontSize:14,color:C.txt}}>{x.label}{x.plate&&<PlaqueChip p={x.plate}/>}</div>
+                      <div style={{fontSize:12,color:C.sub,marginTop:2}}>
+                        {[x.dueDate&&"📅 "+fD(x.dueDate),x.dueKm&&"📍 "+kmTxt(x.dueKm)+" km"].filter(Boolean).join("  ou  ")}
+                      </div>
+                      <div style={{fontSize:13,fontWeight:700,color:m.col,marginTop:3}}>{m.ico} {x.etat.txt||m.l}</div>
+                      {x.dueKm&&kj&&<div style={{fontSize:11,color:C.mut,marginTop:2}}>
+                        {kj.estime?"Kilométrage estimé ≈ "+kmTxt(kj.km)+" km (relevé "+kmTxt(kj.releve)+" km le "+fD(kj.date)+", ≈ "+kmTxt(kj.parAn)+" km/an)":"Dernier relevé : "+kmTxt(kj.km)+" km le "+fD(kj.date)}
+                      </div>}
+                      {x.note&&<div style={{fontSize:12,color:C.sub,marginTop:4,whiteSpace:"pre-wrap"}}>{x.note}</div>}
+                    </div>
+                    <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+                      {x.etat.niv!=="ok"&&c.email&&<a href={mailto(c,x)} title="Préparer un courriel de rappel dans votre messagerie"
+                        style={{fontSize:12,padding:"5px 10px",borderRadius:7,border:"1px solid "+m.bd,background:"#fff",color:m.col,textDecoration:"none",fontWeight:600}}>✉️ Prévenir</a>}
+                      <Btn sm onClick={()=>sfait(x)}>✓ Réalisé</Btn>
+                      <Btn sm ghost onClick={()=>sech({init:x})}>✏️</Btn>
+                      <Btn sm ghost danger onClick={()=>supprimer(x)}>🗑</Btn>
+                    </div>
+                  </div>); })}
+              </div>}
+          {sugg.length>0&&(
+            <div style={{marginTop:14,padding:12,borderRadius:10,background:"#f8fafc",border:"1px dashed "+C.bdr}}>
+              <div style={{fontSize:13,fontWeight:700,color:C.txt,marginBottom:8}}>💡 À programmer ?</div>
+              <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                {sugg.map(s=>(
+                  <div key={s.id} style={{display:"flex",gap:10,alignItems:"center",justifyContent:"space-between",flexWrap:"wrap"}}>
+                    <div style={{flex:"1 1 240px",minWidth:0}}>
+                      <div style={{fontSize:13,fontWeight:600,color:C.txt}}>{s.ico} {s.titre}</div>
+                      <div style={{fontSize:11,color:C.mut}}>{s.detail}</div>
+                    </div>
+                    <div style={{display:"flex",gap:6}}>
+                      <Btn sm onClick={()=>sech({init:s.init})}>⏰ Programmer</Btn>
+                      <Btn sm ghost onClick={()=>ignorer(c.id+":"+s.id)}>Ignorer</Btn>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {d.faites.length>0&&(
+            <div style={{marginTop:14}}>
+              <button onClick={()=>svf(v=>!v)} style={{background:"none",border:"none",cursor:"pointer",color:C.sub,fontSize:13,fontWeight:600,padding:0,fontFamily:"inherit"}}>
+                {vuesFaites?"▾":"▸"} Échéances réalisées ({d.faites.length})
+              </button>
+              {vuesFaites&&(
+                <div style={{display:"flex",flexDirection:"column",gap:6,marginTop:8}}>
+                  {d.faites.map(x=>(
+                    <div key={x.id} style={{display:"flex",gap:10,alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",padding:"8px 10px",borderRadius:8,background:"#f8fafc",border:"1px solid "+C.bdr}}>
+                      <span style={{fontSize:13,color:C.sub}}>✓ {echType(x.kind).ico} <b style={{color:C.txt}}>{x.label}</b>{x.plate&&<PlaqueChip p={x.plate}/>}
+                        <span style={{color:C.mut}}> — réalisé le {fD(x.doneAt)}{x.doneKm?" à "+kmTxt(x.doneKm)+" km":""}{x.doneBy?" ("+x.doneBy+")":""}</span></span>
+                      <div style={{display:"flex",gap:6}}>
+                        <Btn sm ghost onClick={()=>rouvrir(x)}>↺ Rouvrir</Btn>
+                        <Btn sm ghost danger onClick={()=>supprimer(x)}>🗑</Btn>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </Crd>
+
+        <h3 style={{color:C.txt,fontSize:16,fontWeight:700,margin:"4px 0 10px"}}>📜 Opérations réalisées</h3>
+        <Chronologie items={items} vide="Aucune opération enregistrée pour ce client." isStaff
+          nav={nav} selOrd={selOrd} openDoc={openDoc} onEditVh={svh} onDelVh={delVh} plaques={d.vehicules.length>1}
+          onProgrammer={o=>{ const s=suggestionsClient({...d,ech:[]},ref).find(z=>z.id==="vs-"+o.id); sech({init:s?s.init:{kind:"autre",plate:plateFmt(o.plate)}}); }}/>
+
+        {ech&&<EchModal init={ech.init} client={c} vehicules={d.vehicules} kmDe={kmDe} onSave={enregistrer} onClose={()=>sech(null)}/>}
+        {fait&&<FaitModal x={fait} kmJour={fait.plate?kmDe(fait.plate):null} onConfirm={r=>realiser(fait,r)} onClose={()=>sfait(null)}/>}
+        {vh&&<VhModal init={vh} user={user} onSave={saveVh} onClose={()=>svh(null)}/>}
+      </div>
+    );
+  }
+
+  // ── Liste ──
+  const compte=(niv)=>liste.filter(x=>x.niv===niv).length;
+  const needle=q.trim().toLowerCase(), nKey=plateKey(q);
+  const shown=liste
+    .filter(x=>filtre==="tous"||x.niv===filtre)
+    .filter(x=>!needle||[x.c.name,x.c.phone,x.c.email].join(" ").toLowerCase().includes(needle)
+      ||(nKey.length>=3&&x.vehicules.some(v=>v.key.includes(nKey))))
+    .sort((a,b)=>NIV[a.niv].r-NIV[b.niv].r||(a.top&&b.top?a.top.etat.rang-b.top.etat.rang:0)||a.c.name.localeCompare(b.c.name,"fr"));
+  const tuiles=[
+    {v:"tous",l:"Tous les clients",ico:"📇",n:liste.length,col:C.acc,bg:"#dbeafe"},
+    ...["retard","bientot","ok","aucun"].map(k=>({v:k,l:NIV[k].l,ico:NIV[k].ico,n:compte(k),col:NIV[k].col,bg:k==="aucun"?"#f1f5f9":NIV[k].bg})),
+  ];
+  const creer=async()=>{ const c=await act.ajouterClient(neuf); if(c){ sneuf(null); setSel(c.id); } };
+  return (
+    <div style={{maxWidth:960,margin:"0 auto"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexWrap:"wrap",gap:12}}>
+        <h2 style={{color:C.txt,fontSize:20,fontWeight:700,margin:0}}>📇 Fichier client</h2>
+        <Btn sm onClick={()=>sneuf(n=>n?null:{name:"",phone:"",email:""})}>{neuf?"Annuler":"+ Nouveau client"}</Btn>
+      </div>
+      {neuf&&(
+        <Crd style={{marginBottom:14}}>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"flex-end"}}>
+            <div style={{flex:"2 1 180px"}}><label style={{fontSize:11,color:C.mut}}>Nom *</label>
+              <input value={neuf.name} onChange={e=>sneuf(p=>({...p,name:e.target.value}))} placeholder="DUPOND Claire" style={TI}/></div>
+            <div style={{flex:"1 1 140px"}}><label style={{fontSize:11,color:C.mut}}>Téléphone</label>
+              <input value={neuf.phone} onChange={e=>sneuf(p=>({...p,phone:e.target.value}))} placeholder="06 12 34 56 78" style={TI}/></div>
+            <div style={{flex:"2 1 180px"}}><label style={{fontSize:11,color:C.mut}}>Adresse électronique</label>
+              <input value={neuf.email} onChange={e=>sneuf(p=>({...p,email:e.target.value}))} placeholder="client@exemple.fr" style={TI}/></div>
+            <Btn sm onClick={creer}>Créer la fiche</Btn>
+          </div>
+        </Crd>
+      )}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:10,marginBottom:14}}>
+        {tuiles.map(t=>{ const on=filtre===t.v; return (
+          <button key={t.v} onClick={()=>sfiltre(t.v)} style={{textAlign:"left",padding:"10px 12px",borderRadius:10,cursor:"pointer",fontFamily:"inherit",
+            border:"2px solid "+(on?t.col:C.bdr),background:on?t.bg:C.card}}>
+            <div style={{fontSize:24,fontWeight:700,color:t.col,lineHeight:1.1}}>{t.n}</div>
+            <div style={{fontSize:12,color:on?t.col:C.sub,fontWeight:600,marginTop:2}}>{t.ico} {t.l}</div>
+          </button>); })}
+      </div>
+      <Crd style={{marginBottom:14}}>
+        <input value={q} onChange={e=>sq(e.target.value)} placeholder="Rechercher : nom, téléphone, courriel, immatriculation…"
+          style={{width:"100%",background:"#f1f5f9",border:"1px solid "+C.bdr,borderRadius:8,padding:"11px 14px",color:C.txt,fontSize:15,outline:"none",fontFamily:"inherit"}}/>
+        <p style={{color:C.mut,fontSize:12,margin:"8px 0 0"}}>
+          🟠 échéance dans moins de {ECH_JOURS} jours ou {kmTxt(ECH_KM)} km · 🔴 échéance dépassée.
+          Le kilométrage du jour est estimé d'après les relevés de l'atelier.
+        </p>
+      </Crd>
+      {shown.length===0
+        ? <Crd><p style={{color:C.mut,fontSize:13,margin:0}}>{liste.length===0?"Aucun client enregistré pour le moment.":"Aucun client ne correspond."}</p></Crd>
+        : <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:12}}>
+            {shown.map(x=>{ const m=NIV[x.niv], alerte=x.niv==="retard"||x.niv==="bientot"; return (
+              <div key={x.c.id} onClick={()=>{setSel(x.c.id);window.scrollTo(0,0);}} style={{background:alerte?m.bg:C.card,borderRadius:12,padding:14,cursor:"pointer",
+                border:"1px solid "+(alerte?m.bd:C.bdr),borderLeft:"6px solid "+m.col}}
+                onMouseEnter={e=>e.currentTarget.style.boxShadow="0 4px 14px rgba(15,23,42,.10)"}
+                onMouseLeave={e=>e.currentTarget.style.boxShadow="none"}>
+                <div style={{display:"flex",justifyContent:"space-between",gap:8,alignItems:"flex-start"}}>
+                  <div style={{minWidth:0}}>
+                    <div style={{color:C.txt,fontWeight:700,fontSize:16,overflow:"hidden",textOverflow:"ellipsis"}}>{x.c.name}</div>
+                    {x.c.phone&&<div style={{color:C.sub,fontSize:12}}>📞 {x.c.phone}</div>}
+                  </div>
+                  <NivPill niv={x.niv} sm/>
+                </div>
+                {x.vehicules.length>0&&(
+                  <div style={{display:"flex",gap:4,flexWrap:"wrap",marginTop:8}}>
+                    {x.vehicules.slice(0,4).map(v=><span key={v.key} style={{fontSize:11,fontWeight:700,padding:"2px 7px",borderRadius:6,background:"#fff",border:"1px solid "+C.bdr,color:C.txt,letterSpacing:.4}}>{v.plate}</span>)}
+                    {x.vehicules.length>4&&<span style={{fontSize:11,color:C.mut}}>+{x.vehicules.length-4}</span>}
+                  </div>
+                )}
+                {x.top&&(
+                  <div style={{marginTop:8,fontSize:12,fontWeight:600,color:m.col}}>
+                    {echType(x.top.kind).ico} {x.top.label}{x.top.etat.txt?" — "+x.top.etat.txt:""}
+                    {x.actives.length>1&&<span style={{fontWeight:400,color:C.mut}}> · +{x.actives.length-1} autre{x.actives.length>2?"s":""}</span>}
+                  </div>
+                )}
+                <div style={{color:C.mut,fontSize:11,marginTop:8}}>{x.ors.length} OR · dernier passage {x.dernier?fD(x.dernier):"—"}</div>
+              </div>); })}
+          </div>}
+    </div>
+  );
+}
 
 // ── Tour photo : schéma, capture, envoi ─────────────────────────────────────
 
@@ -2413,6 +3057,40 @@ function TariffRow({ t, onSave, onDelete }) {
   );
 }
 
+// Gestion de la base clients, commune à l'administration et au fichier client.
+function actionsClient({ clients, cVehicles, reloadClients, reloadCVehicles, notify }) {
+  const err=(e)=>{ console.error(e); notify("Erreur : "+(e.message||e),"error"); };
+  return {
+    saveClient: async(c,patch)=>{ try{ await updateClient(c.id,patch); reloadClients(); } catch(e){ err(e); } },
+    // true si la fiche a été supprimée
+    delClient: async(c)=>{
+      if(!window.confirm("Supprimer la fiche de « "+c.name+" » ?\nSes échéances sont supprimées avec elle ; les ordres et documents déjà établis ne sont pas modifiés."))return false;
+      try{ await deleteClient(c.id); reloadClients(); notify("Fiche client supprimée"); return true; } catch(e){ err(e); return false; }
+    },
+    addVehicle: async(c,v)=>{
+      const prop=vehicleOwner(cVehicles,v.plate);
+      if(prop&&prop.clientId!==c.id){
+        const autre=(clients||[]).find(x=>x.id===prop.clientId);
+        if(!window.confirm("Cette immatriculation est rattachée à « "+(autre?autre.name:"un autre client")+" ».\nLa transférer à « "+c.name+" » ?"))return;
+      }
+      try{ await rememberVehicle({clientId:c.id,plate:v.plate.trim(),brand:v.brand,model:v.model},cVehicles);
+        reloadCVehicles(); notify("Véhicule rattaché à "+c.name); }
+      catch(e){ err(e); }
+    },
+    delVehicle: async(v)=>{
+      if(!window.confirm("Détacher le véhicule "+plateFmt(v.plate)+" de ce client ?\nSon historique d'entretien n'est pas modifié."))return;
+      try{ await deleteClientVehicle(v.id); reloadCVehicles(); notify("Véhicule détaché"); } catch(e){ err(e); }
+    },
+    // renvoie la fiche créée, ou null
+    ajouterClient: async(nc)=>{
+      if(!String(nc.name||"").trim()){notify("Le nom du client est obligatoire","error");return null;}
+      if(findClient(clients,nc.name)){notify("Un client porte déjà ce nom","error");return null;}
+      try{ const c=await insertClient({...nc,name:nc.name.trim()}); reloadClients(); notify("Client ajouté"); return c; }
+      catch(e){ err(e); return null; }
+    },
+  };
+}
+
 function ClientRow({ c, orders, vehicles, onSave, onDelete, onAddVehicle, onDelVehicle }) {
   const [nv,setNv]=useState({plate:"",brand:"",model:""});
   const snap=()=>({ name:c.name, phone:c.phone, email:c.email, notes:c.notes });
@@ -2512,36 +3190,9 @@ function AdminPanel({ students, staff, orders, tariffs, reloadTariffs, clients, 
   const [newGrp,setNewGrp]=useState("");
   // ── Base clients (enseignants et administrateurs) ──
   const [cq,setCq]=useState(""); const [nc,setNc]=useState({name:"",phone:"",email:""});
-  const saveClient=async(c,patch)=>{
-    try{ await updateClient(c.id,patch); reloadClients(); }
-    catch(e){ console.error(e); notify("Erreur : "+(e.message||e),"error"); }
-  };
-  const delClient=async(c)=>{
-    if(!window.confirm("Supprimer la fiche de « "+c.name+" » ?\nLes ordres et documents déjà établis ne sont pas modifiés."))return;
-    try{ await deleteClient(c.id); reloadClients(); notify("Fiche client supprimée"); }
-    catch(e){ console.error(e); notify("Erreur : "+(e.message||e),"error"); }
-  };
-  const addVehicle=async(c,v)=>{
-    const prop=vehicleOwner(cVehicles,v.plate);
-    if(prop&&prop.clientId!==c.id){
-      const autre=(clients||[]).find(x=>x.id===prop.clientId);
-      if(!window.confirm("Cette immatriculation est rattachée à « "+(autre?autre.name:"un autre client")+" ».\nLa transférer à « "+c.name+" » ?"))return;
-    }
-    try{ await rememberVehicle({clientId:c.id,plate:v.plate.trim(),brand:v.brand,model:v.model},cVehicles);
-      reloadCVehicles(); notify("Véhicule rattaché à "+c.name); }
-    catch(e){ console.error(e); notify("Erreur : "+(e.message||e),"error"); }
-  };
-  const delVehicle=async(v)=>{
-    if(!window.confirm("Détacher le véhicule "+plateFmt(v.plate)+" de ce client ?\nSon historique d'entretien n'est pas modifié."))return;
-    try{ await deleteClientVehicle(v.id); reloadCVehicles(); notify("Véhicule détaché"); }
-    catch(e){ console.error(e); notify("Erreur : "+(e.message||e),"error"); }
-  };
-  const addClient=async()=>{
-    if(!nc.name.trim()){notify("Le nom du client est obligatoire","error");return;}
-    if(findClient(clients,nc.name)){notify("Un client porte déjà ce nom","error");return;}
-    try{ await insertClient({...nc,name:nc.name.trim()}); setNc({name:"",phone:"",email:""}); reloadClients(); notify("Client ajouté"); }
-    catch(e){ console.error(e); notify("Erreur : "+(e.message||e),"error"); }
-  };
+  const { saveClient, delClient, addVehicle, delVehicle, ajouterClient } =
+    actionsClient({ clients, cVehicles, reloadClients, reloadCVehicles, notify });
+  const addClient=async()=>{ if(await ajouterClient(nc)) setNc({name:"",phone:"",email:""}); };
   const stats=[
     {l:"Total interventions",v:orders.length,c:"#2563eb"},{l:"En attente",v:orders.filter(o=>o.status==="en_attente").length,c:"#f59e0b"},
     {l:"En cours",v:orders.filter(o=>o.status==="en_cours").length,c:"#3b82f6"},{l:"Terminées",v:orders.filter(o=>o.status==="termine").length,c:"#059669"},
@@ -2675,6 +3326,7 @@ function AdminPanel({ students, staff, orders, tariffs, reloadTariffs, clients, 
                 Ces fiches sont proposées à la saisie d'un <b>ordre de réparation</b> et d'un <b>devis / facture</b> :
                 choisir un client remplit ses coordonnées. La base s'enrichit toute seule — un nouveau nom saisi par
                 un enseignant y est ajouté. Les modifications sont enregistrées dès que vous quittez un champ.
+                Échéances, rappels et historique de chaque client : menu <b>📇 Fichier client</b>.
               </p>
             </Crd>
             <Crd>
@@ -3070,6 +3722,15 @@ export default function DMSApp() {
   const { clients, reloadClients } = useClients(cu?.id);
   const photoIdx = usePhotoIndex(cu?.id);
   const { clientVehicles: cVehicles, reloadClientVehicles } = useClientVehicles(cu?.id);
+  const { reminders, addRem, editRem, removeRem } = useReminders(cu?.id);
+  const remOps = useMemo(() => ({ addRem, editRem, removeRem }), [addRem, editRem, removeRem]);
+  // Dossiers du fichier client (état des échéances), partagés par le menu, le tableau de bord et la fiche.
+  const dossiers = useMemo(() => dossiersClients({ clients, cVehicles, orders, documents, history: vehicleHistory, reminders }, aujourdhui()),
+    [clients, cVehicles, orders, documents, vehicleHistory, reminders]);
+  const aRelancer = dossiers.liste.filter(d => d.niv === "retard" || d.niv === "bientot")
+    .sort((a, b) => NIV[a.niv].r - NIV[b.niv].r || a.top.etat.rang - b.top.etat.rang);
+  const alertes = { r: aRelancer.filter(d => d.niv === "retard").length, o: aRelancer.filter(d => d.niv === "bientot").length };
+  const [ficheClient,sfc]=useState(null);
   const [staff,setStaff]=useState([]);
   const [page,sp]=useState("dashboard");
   const [selId,ssi]=useState(null); const [sideOpen,sso]=useState(false);
@@ -3081,7 +3742,8 @@ export default function DMSApp() {
   const notify=useCallback((msg,type)=>{sn({msg,type:type||"success"});setTimeout(()=>sn(null),3500);},[]);
   const reloadStaff=useCallback(()=>{ listStaff().then(setStaff).catch(e=>console.error(e)); },[]);
   useEffect(()=>{ if(cu) reloadStaff(); },[cu,reloadStaff]);
-  const nav=p=>{sp(p);sso(false);};
+  const nav=p=>{sp(p);sso(false);if(p==="clients")sfc(null);};
+  const ouvrirClient=id=>{sfc(id);sp("clients");sso(false);};
   const logout=async()=>{ await supabase.auth.signOut(); sp("dashboard"); ssi(null); };
   if(!ready)return(<div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:C.bg,color:C.sub,fontFamily:"system-ui,sans-serif"}}>Chargement…</div>);
   if(recovery)return<ResetPasswordView notify={notify} onDone={async()=>{clearRecovery();await supabase.auth.signOut();}}/>;
@@ -3089,7 +3751,8 @@ export default function DMSApp() {
   const isStaff=cu.role!=="eleve"; const isAdmin=cu.role==="admin";
   const rs=ROLE_STYLE[cu.role]||{bg:"#e2e8f0",cl:C.sub};
   const renderPage=()=>{
-    if(page==="dashboard")    return<Dashboard orders={orders} nav={nav} selOrd={ssi} photoIdx={photoIdx.parOrdre}/>;
+    if(page==="dashboard")    return<Dashboard orders={orders} nav={nav} selOrd={ssi} photoIdx={photoIdx.parOrdre} echeances={isStaff?aRelancer:null} ouvrirClient={ouvrirClient}/>;
+    if(page==="clients")      return isStaff?<FichierClient dossiers={dossiers} sel={ficheClient} setSel={sfc} clients={clients} cVehicles={cVehicles} reloadClients={reloadClients} reloadCVehicles={reloadClientVehicles} orders={orders} remOps={remOps} addVh={addVh} editVh={editVh} removeVh={removeVh} user={cu} nav={nav} selOrd={ssi} openDoc={openDoc} notify={notify}/>:null;
     if(page==="orders")       return<OrdersList orders={orders} nav={nav} selOrd={ssi} photoIdx={photoIdx.parOrdre}/>;
     if(page==="vehicles")     return <VehiclesView orders={orders} documents={documents} vehicleHistory={vehicleHistory} clients={clients} cVehicles={cVehicles} user={cu} nav={nav} selOrd={ssi} openDoc={openDoc} addVh={addVh} editVh={editVh} removeVh={removeVh} notify={notify}/>;
     if(page==="new-order")    return <NewOrderForm addOrder={addOrder} teachers={staff} students={students} clients={clients} reloadClients={reloadClients} cVehicles={cVehicles} reloadCVehicles={reloadClientVehicles} photosPret={photoIdx.pret} user={cu} nav={nav} selOrd={ssi} notify={notify}/>;
@@ -3111,12 +3774,14 @@ export default function DMSApp() {
       )}
       {sideOpen&&!isDesktop&&<div onClick={()=>sso(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",zIndex:48}}/>}
       <div style={{position:isDesktop?"sticky":"fixed",top:0,left:0,height:"100vh",zIndex:49,flexShrink:0,transform:isDesktop||sideOpen?"none":"translateX(-100%)",transition:"transform .25s ease"}}>
-        <Sidebar user={cu} page={page} nav={nav} logout={logout}/>
+        <Sidebar user={cu} page={page} nav={nav} logout={logout} alertes={isStaff?alertes:null}/>
       </div>
       <div style={{flex:1,display:"flex",flexDirection:"column",minWidth:0}}>
         <header style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 16px",background:C.hdr,borderBottom:"1px solid "+C.bdr,position:"sticky",top:0,zIndex:30}}>
           <div style={{display:"flex",alignItems:"center",gap:12}}>
-            {!isDesktop&&<button onClick={()=>sso(true)} style={{background:"none",border:"none",color:C.sub,cursor:"pointer",fontSize:22,padding:"2px 6px",lineHeight:1}}>☰</button>}
+            {!isDesktop&&<button onClick={()=>sso(true)} style={{position:"relative",background:"none",border:"none",color:C.sub,cursor:"pointer",fontSize:22,padding:"2px 6px",lineHeight:1}}>☰
+              {isStaff&&(alertes.r>0||alertes.o>0)&&<span style={{position:"absolute",top:0,right:0,width:10,height:10,borderRadius:"50%",background:alertes.r>0?"#dc2626":"#f97316",border:"2px solid "+C.hdr}}/>}
+            </button>}
             <div style={{display:"flex",alignItems:"center",gap:8}}><img src={LOGO} alt="" style={{width:28,height:28,borderRadius:"50%",flexShrink:0}}/><div><div style={{color:"#3b82f6",fontWeight:700,fontSize:14}}>DMS – Atelier BTS MV</div><div style={{color:C.mut,fontSize:11}}>Lycée Gallieni</div></div></div>
           </div>
           <div style={{display:"flex",alignItems:"center",gap:8}}>

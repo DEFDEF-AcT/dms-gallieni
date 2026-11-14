@@ -267,6 +267,53 @@ export async function deleteVehicleHistory(id) {
   if (error) throw error;
 }
 
+// ── Échéances du fichier client (contrôle technique, révision, courroie…) ───
+// Lecture et écriture : enseignants et administrateurs (RLS).
+const kmInt = (v) => {
+  const n = parseInt(String(v ?? "").replace(/\D/g, ""), 10);
+  return Number.isFinite(n) ? n : null;
+};
+export function rowToReminder(r) {
+  return {
+    id: r.id, clientId: r.client_id, plate: r.plate || "", kind: r.kind || "autre",
+    label: r.label || "", dueDate: r.due_date || "", dueKm: r.due_km ?? null, note: r.note || "",
+    done: !!r.done, doneAt: r.done_at || "", doneKm: r.done_km ?? null, doneBy: r.done_by || "",
+    createdBy: r.created_by || "", createdAt: r.created_at,
+  };
+}
+function reminderToRow(x) {
+  const row = {};
+  if ("clientId" in x) row.client_id = x.clientId;
+  for (const k of ["plate", "kind", "label", "note", "doneBy", "createdBy"])
+    if (k in x) row[camelToSnake(k)] = String(x[k] ?? "").trim();
+  if ("done" in x) row.done = !!x.done;
+  if ("dueDate" in x) row.due_date = x.dueDate || null;
+  if ("doneAt" in x) row.done_at = x.doneAt || null;
+  if ("dueKm" in x) row.due_km = kmInt(x.dueKm);
+  if ("doneKm" in x) row.done_km = kmInt(x.doneKm);
+  return row;
+}
+export async function listReminders() {
+  const { data, error } = await supabase
+    .from("reminders").select("*").order("due_date", { ascending: true, nullsFirst: false });
+  if (error) throw error;
+  return data.map(rowToReminder);
+}
+export async function insertReminder(x) {
+  const { data, error } = await supabase.from("reminders").insert(reminderToRow(x)).select().single();
+  if (error) throw error;
+  return rowToReminder(data);
+}
+export async function updateReminder(id, patch) {
+  const { data, error } = await supabase.from("reminders").update(reminderToRow(patch)).eq("id", id).select().single();
+  if (error) throw error;
+  return rowToReminder(data);
+}
+export async function deleteReminder(id) {
+  const { error } = await supabase.from("reminders").delete().eq("id", id);
+  if (error) throw error;
+}
+
 // ── Tarifs de l'atelier (lecture : tout le monde ; écriture : admin via RLS) ─
 export function rowToTariff(r) {
   return {

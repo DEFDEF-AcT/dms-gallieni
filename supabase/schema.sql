@@ -476,6 +476,49 @@ create policy del_client_vehicles  on client_vehicles for delete using (is_staff
 alter publication supabase_realtime add table client_vehicles;
 
 -- ============================================================================
+-- FICHIER CLIENT : échéances et travaux à prévoir (contrôle technique, révision,
+-- courroie de distribution…), par client et éventuellement par véhicule.
+-- Échéance par date, par kilométrage, ou les deux. Le client passe à l'orange
+-- à moins de 30 jours / 1 500 km, au rouge une fois l'échéance dépassée
+-- (calcul dans l'application). Enseignants et administrateurs uniquement.
+-- ============================================================================
+create table if not exists reminders (
+  id          uuid primary key default gen_random_uuid(),
+  client_id   uuid not null references clients(id) on delete cascade,
+  plate       text default '',
+  kind        text not null default 'autre', -- controle_technique, revision, courroie, liquide_frein, climatisation, freins, pneus, autre
+  label       text not null default '',
+  due_date    date,
+  due_km      integer,
+  note        text default '',
+  done        boolean not null default false,
+  done_at     date,
+  done_km     integer,
+  done_by     text default '',
+  created_by  text default '',
+  created_at  timestamptz default now(),
+  updated_at  timestamptz default now(),
+  constraint reminders_echeance_check check (due_date is not null or due_km is not null)
+);
+create index if not exists reminders_client_idx on reminders (client_id);
+
+drop trigger if exists trg_reminders_touch on reminders;
+create trigger trg_reminders_touch before update on reminders
+  for each row execute function touch_updated_at();
+
+alter table reminders enable row level security;
+drop policy if exists read_reminders on reminders;
+drop policy if exists ins_reminders  on reminders;
+drop policy if exists upd_reminders  on reminders;
+drop policy if exists del_reminders  on reminders;
+create policy read_reminders on reminders for select using (is_staff());
+create policy ins_reminders  on reminders for insert with check (is_staff());
+create policy upd_reminders  on reminders for update using (is_staff());
+create policy del_reminders  on reminders for delete using (is_staff());
+
+alter publication supabase_realtime add table reminders;
+
+-- ============================================================================
 -- PHOTOS D'ÉTAT D'ENTRÉE — voir supabase/order-photos.sql (table order_photos).
 -- Ce fichier séparé est à exécuter tel quel : originaux sur le Drive
 -- (<client>/<véhicule>/<date>/), miniature + lien dans la table.

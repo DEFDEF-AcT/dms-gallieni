@@ -533,11 +533,13 @@ function orderHTML(order, photos) {
     const base = reception.length ? reception : vues;
     const temps = base.map(ph => String(ph.takenAt)).sort();
     const auteurs = [...new Set(vues.map(ph => ph.createdBy).filter(Boolean))].join(", ");
+    const debut = hm(temps[0]), fin = hm(temps[temps.length-1]);
+    const plage = debut === fin ? "à " + debut : "de " + debut + " à " + fin;
     return `<div class="pb">
 <div class="sec"><div class="sh">État du véhicule à l'entrée – ${vues.length} photo${vues.length>1?"s":""}</div>
 <div class="etat">${reception.length
-  ? `${reception.length} photo${reception.length>1?"s":""} prise${reception.length>1?"s":""} le ${fD(temps[0])} de ${hm(temps[0])} à ${hm(temps[temps.length-1])}, à l'ouverture de l'ordre de réparation${signeEtat?", avant la signature du client":""}.`
-  : `Photos prises le ${fD(temps[0])} de ${hm(temps[0])} à ${hm(temps[temps.length-1])}.`}${
+  ? `${reception.length} photo${reception.length>1?"s":""} prise${reception.length>1?"s":""} le ${fD(temps[0])} ${plage}, à l'ouverture de l'ordre de réparation${signeEtat?", avant la signature du client":""}.`
+  : `Photo${vues.length>1?"s":""} prise${vues.length>1?"s":""} le ${fD(temps[0])} ${plage}.`}${
   reception.length&&ajouts.length?` ${ajouts.length} photo${ajouts.length>1?"s":""} ajoutée${ajouts.length>1?"s":""} ensuite (signalée${ajouts.length>1?"s":""} ci-dessous).`:""}${
   auteurs?" Prises de vue : "+esc(auteurs)+".":""} Chaque original, en pleine résolution, porte la date, l'heure et l'immatriculation incrustées ; ils sont conservés par l'atelier.</div>
 ${dommages.length

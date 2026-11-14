@@ -93,14 +93,28 @@ Deno.serve(async (req) => {
     let res: Record<string, unknown>;
     try { res = JSON.parse(txt); }
     catch {
-      // Une page HTML au lieu de JSON = Google réclame une connexion : l'application
-      // web n'est pas publiée en accès libre (ou son URL /exec a changé).
-      res = txt.trimStart().startsWith("<")
-        ? { ok: false, error: "Le script Google a renvoyé une page de connexion au lieu de données. " +
-            "Dans Apps Script → Déployer → Gérer les déploiements → ✏️ : « Exécuter en tant que » = Moi, " +
-            "« Qui a accès » = Tout le monde, puis Déployer. Vérifiez aussi que l'URL /exec affichée " +
-            "est bien celle enregistrée dans le secret APPS_SCRIPT_URL." }
-        : { ok: false, error: "Réponse inattendue du script : " + txt.slice(0, 200) };
+      // Google a répondu par une page web au lieu de JSON. On consigne de quoi
+      // l'identifier (visible dans les journaux Supabase) et on oriente le diagnostic.
+      const titre = ((/<title[^>]*>([^<]*)<\/title>/i.exec(txt) || [])[1] || "").trim().slice(0, 120);
+      // Texte visible de la page : sur une page d'erreur Apps Script, c'est le
+      // message lui-même (ex. « SyntaxError … (ligne 12, fichier "Code") »).
+      const visible = txt.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ")
+        .replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&quot;/g, '"').replace(/&#39;|&#x27;/g, "'")
+        .replace(/&amp;/g, "&").replace(/\s+/g, " ").trim().slice(0, 300);
+      let hote = ""; try { hote = new URL(r.url).host; } catch { /* ignore */ }
+      console.error("[passerelle] réponse non JSON du script", JSON.stringify({
+        action, status: r.status, hote, titre, visible, taille: txt.length,
+      }));
+      const connexion = /accounts\.google\.com/.test(hote) || /sign in|connexion|se connecter|anmelden/i.test(titre);
+      const introuvable = r.status === 404 || /not found|introuvable|n'existe pas|nicht gefunden|unable to open|impossible d'ouvrir/i.test(titre);
+      res = { ok: false, error: connexion
+        ? "Le script Google demande une connexion : dans Apps Script → Déployer → Gérer les déploiements → ✏️, " +
+          "« Exécuter en tant que » = Moi et « Qui a accès » = Tout le monde, puis Déployer."
+        : introuvable
+        ? "L'adresse du script Google ne correspond plus à un déploiement actif (déploiement supprimé ou archivé ?). " +
+          "Comparez l'URL /exec de Gérer les déploiements avec le secret APPS_SCRIPT_URL de Supabase."
+        : "Le script Google s'est arrêté sur une erreur" + (visible ? " : « " + visible + " »" : "") +
+          " (HTTP " + r.status + (titre ? ", « " + titre + " »" : "") + ")." };
     }
 
     // Un script à jour signe sa réponse (`photo`, `mailed`). Un script resté à

@@ -2017,7 +2017,13 @@ function FichierClient({ dossiers, sel, setSel, clients, cVehicles, reloadClient
   const ref=aujourdhui();
   const act=actionsClient({ clients, cVehicles, reloadClients, reloadCVehicles, notify });
   const err=(e)=>{ console.error(e); notify("Erreur : "+(e.message||e),"error"); };
+  if(user.role==="eleve") return null;   // réservé aux enseignants et administrateurs
   const d=sel?liste.find(x=>x.c.id===sel):null;
+  const supprimerClient=async(dd)=>{
+    const n=dd.ech.length, v=clientVehicles(cVehicles,dd.c.id).length;
+    const aussi=[n&&n+" échéance"+(n>1?"s":""),v&&v+" véhicule"+(v>1?"s":"")+" rattaché"+(v>1?"s":"")].filter(Boolean).join(", ");
+    if(await act.delClient(dd.c,aussi||"aucune échéance ni véhicule rattaché")){ if(sel===dd.c.id){ setSel(null); sedit(false); } }
+  };
 
   const enregistrer=async(data)=>{
     try{
@@ -2089,6 +2095,7 @@ function FichierClient({ dossiers, sel, setSel, clients, cVehicles, reloadClient
             <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
               <Btn sm onClick={()=>sech({init:null})}>⏰ Ajouter une échéance</Btn>
               <Btn sm ghost onClick={()=>sedit(e=>!e)}>{edit?"Fermer":"✏️ Coordonnées et véhicules"}</Btn>
+              <Btn sm ghost danger onClick={()=>supprimerClient(d)}>🗑 Supprimer le client</Btn>
             </div>
           </div>
           <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:12}}>
@@ -2109,7 +2116,7 @@ function FichierClient({ dossiers, sel, setSel, clients, cVehicles, reloadClient
         {edit&&(
           <div style={{marginBottom:14}}>
             <ClientRow c={c} orders={orders} vehicles={clientVehicles(cVehicles,c.id)}
-              onSave={patch=>act.saveClient(c,patch)} onDelete={async x=>{ if(await act.delClient(x)) setSel(null); }}
+              onSave={patch=>act.saveClient(c,patch)} onDelete={()=>supprimerClient(d)}
               onAddVehicle={act.addVehicle} onDelVehicle={act.delVehicle}/>
           </div>
         )}
@@ -2216,23 +2223,37 @@ function FichierClient({ dossiers, sel, setSel, clients, cVehicles, reloadClient
     {v:"tous",l:"Tous les clients",ico:"📇",n:liste.length,col:C.acc,bg:"#dbeafe"},
     ...["retard","bientot","ok","aucun"].map(k=>({v:k,l:NIV[k].l,ico:NIV[k].ico,n:compte(k),col:NIV[k].col,bg:k==="aucun"?"#f1f5f9":NIV[k].bg})),
   ];
-  const creer=async()=>{ const c=await act.ajouterClient(neuf); if(c){ sneuf(null); setSel(c.id); } };
+  const NEUF0={name:"",phone:"",email:"",plate:"",brand:"",model:"",firstReg:""};
+  const creer=async()=>{
+    const c=await act.ajouterClient({name:neuf.name,phone:neuf.phone,email:neuf.email});
+    if(!c) return;
+    if(plateKey(neuf.plate)) await act.addVehicle(c,neuf);
+    sneuf(null); sq(""); sfiltre("tous"); setSel(c.id); window.scrollTo(0,0);
+  };
   return (
     <div style={{maxWidth:960,margin:"0 auto"}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexWrap:"wrap",gap:12}}>
         <h2 style={{color:C.txt,fontSize:20,fontWeight:700,margin:0}}>📇 Fichier client</h2>
-        <Btn sm onClick={()=>sneuf(n=>n?null:{name:"",phone:"",email:""})}>{neuf?"Annuler":"+ Nouveau client"}</Btn>
+        {!neuf&&<Btn onClick={()=>sneuf(NEUF0)}>➕ Ajouter un client</Btn>}
       </div>
       {neuf&&(
-        <Crd style={{marginBottom:14}}>
-          <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"flex-end"}}>
+        <Crd style={{marginBottom:14,borderTop:"4px solid "+C.acc}}>
+          <h3 style={{color:C.txt,fontSize:15,fontWeight:700,margin:"0 0 10px"}}>➕ Nouveau client</h3>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"flex-end",marginBottom:12}}>
             <div style={{flex:"2 1 180px"}}><label style={{fontSize:11,color:C.mut}}>Nom *</label>
-              <input value={neuf.name} onChange={e=>sneuf(p=>({...p,name:e.target.value}))} placeholder="DUPOND Claire" style={TI}/></div>
+              <input value={neuf.name} onChange={e=>sneuf(p=>({...p,name:e.target.value}))} placeholder="DUPOND Claire" style={TI} autoFocus/></div>
             <div style={{flex:"1 1 140px"}}><label style={{fontSize:11,color:C.mut}}>Téléphone</label>
               <input value={neuf.phone} onChange={e=>sneuf(p=>({...p,phone:e.target.value}))} placeholder="06 12 34 56 78" style={TI}/></div>
             <div style={{flex:"2 1 180px"}}><label style={{fontSize:11,color:C.mut}}>Adresse électronique</label>
               <input value={neuf.email} onChange={e=>sneuf(p=>({...p,email:e.target.value}))} placeholder="client@exemple.fr" style={TI}/></div>
-            <Btn sm onClick={creer}>Créer la fiche</Btn>
+          </div>
+          <div style={{fontSize:12,fontWeight:600,color:C.sub,marginBottom:4}}>🚗 Véhicule <span style={{fontWeight:400,color:C.mut}}>(facultatif — d'autres pourront être ajoutés sur la fiche)</span></div>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"flex-end",marginBottom:14}}>
+            <ChampsVehicule v={neuf} set={(k,x)=>sneuf(p=>({...p,[k]:x}))}/>
+          </div>
+          <div style={{display:"flex",justifyContent:"flex-end",gap:8}}>
+            <Btn sm ghost onClick={()=>sneuf(null)}>Annuler</Btn>
+            <Btn sm onClick={creer}>✅ Créer la fiche</Btn>
           </div>
         </Crd>
       )}
@@ -2253,7 +2274,8 @@ function FichierClient({ dossiers, sel, setSel, clients, cVehicles, reloadClient
         </p>
       </Crd>
       {shown.length===0
-        ? <Crd><p style={{color:C.mut,fontSize:13,margin:0}}>{liste.length===0?"Aucun client enregistré pour le moment.":"Aucun client ne correspond."}</p></Crd>
+        ? <Crd><p style={{color:C.mut,fontSize:13,margin:0}}>{liste.length===0?"Aucun client enregistré pour le moment.":"Aucun client ne correspond."}</p>
+            {!neuf&&<div style={{marginTop:12}}><Btn sm onClick={()=>sneuf({...NEUF0,...(/\d/.test(q)?{plate:q.trim().toUpperCase()}:{name:q.trim()})})}>➕ Ajouter un client</Btn></div>}</Crd>
         : <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:12}}>
             {shown.map(x=>{ const m=NIV[x.niv], alerte=x.niv==="retard"||x.niv==="bientot"; return (
               <div key={x.c.id} onClick={()=>{setSel(x.c.id);window.scrollTo(0,0);}} style={{background:alerte?m.bg:C.card,borderRadius:12,padding:14,cursor:"pointer",
@@ -2279,7 +2301,13 @@ function FichierClient({ dossiers, sel, setSel, clients, cVehicles, reloadClient
                     {x.actives.length>1&&<span style={{fontWeight:400,color:C.mut}}> · +{x.actives.length-1} autre{x.actives.length>2?"s":""}</span>}
                   </div>
                 )}
-                <div style={{color:C.mut,fontSize:11,marginTop:8}}>{x.ors.length} OR · dernier passage {x.dernier?fD(x.dernier):"—"}</div>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,marginTop:8}}>
+                  <span style={{color:C.mut,fontSize:11}}>{x.ors.length} OR · dernier passage {x.dernier?fD(x.dernier):"—"}</span>
+                  <button title={"Supprimer la fiche de "+x.c.name} onClick={e=>{e.stopPropagation();supprimerClient(x);}}
+                    style={{background:"none",border:"1px solid transparent",borderRadius:6,cursor:"pointer",fontSize:13,padding:"2px 6px",color:C.mut,lineHeight:1}}
+                    onMouseEnter={e=>{e.currentTarget.style.borderColor="#fca5a5";e.currentTarget.style.color="#dc2626";}}
+                    onMouseLeave={e=>{e.currentTarget.style.borderColor="transparent";e.currentTarget.style.color=C.mut;}}>🗑</button>
+                </div>
               </div>); })}
           </div>}
     </div>
@@ -3057,14 +3085,30 @@ function TariffRow({ t, onSave, onDelete }) {
   );
 }
 
+// Saisie d'un véhicule de client : la 1re mise en circulation sert à prévoir le contrôle technique.
+function ChampsVehicule({ v, set }) {
+  const champ=(k,lbl,flex,extra)=>(
+    <div style={{flex}}><label style={{fontSize:11,color:C.mut}}>{lbl}</label>
+      <input value={v[k]} onChange={e=>set(k,k==="plate"?e.target.value.toUpperCase():e.target.value)} style={TI} {...extra}/></div>);
+  return (<>
+    {champ("plate","Immatriculation","1 1 120px",{placeholder:"AB-123-CD"})}
+    {champ("brand","Marque","1 1 110px",{placeholder:"Renault"})}
+    {champ("model","Modèle","1 1 110px",{placeholder:"Clio"})}
+    {champ("firstReg","1re mise en circulation","1 1 150px",{type:"date"})}
+  </>);
+}
+
 // Gestion de la base clients, commune à l'administration et au fichier client.
 function actionsClient({ clients, cVehicles, reloadClients, reloadCVehicles, notify }) {
   const err=(e)=>{ console.error(e); notify("Erreur : "+(e.message||e),"error"); };
   return {
     saveClient: async(c,patch)=>{ try{ await updateClient(c.id,patch); reloadClients(); } catch(e){ err(e); } },
     // true si la fiche a été supprimée
-    delClient: async(c)=>{
-      if(!window.confirm("Supprimer la fiche de « "+c.name+" » ?\nSes échéances sont supprimées avec elle ; les ordres et documents déjà établis ne sont pas modifiés."))return false;
+    // `aussi` : ce qui disparaît avec la fiche (« 2 échéances, 1 véhicule rattaché »)
+    delClient: async(c,aussi)=>{
+      if(!window.confirm("Supprimer définitivement la fiche de « "+c.name+" » ?\n\n"+
+        (aussi?"Seront aussi supprimés : "+aussi+".\n":"Ses échéances et ses véhicules rattachés sont supprimés avec elle.\n")+
+        "Les ordres, estimations, factures et l'historique d'entretien des véhicules sont conservés."))return false;
       try{ await deleteClient(c.id); reloadClients(); notify("Fiche client supprimée"); return true; } catch(e){ err(e); return false; }
     },
     addVehicle: async(c,v)=>{
@@ -3073,7 +3117,7 @@ function actionsClient({ clients, cVehicles, reloadClients, reloadCVehicles, not
         const autre=(clients||[]).find(x=>x.id===prop.clientId);
         if(!window.confirm("Cette immatriculation est rattachée à « "+(autre?autre.name:"un autre client")+" ».\nLa transférer à « "+c.name+" » ?"))return;
       }
-      try{ await rememberVehicle({clientId:c.id,plate:v.plate.trim(),brand:v.brand,model:v.model},cVehicles);
+      try{ await rememberVehicle({clientId:c.id,plate:v.plate.trim(),brand:v.brand,model:v.model,firstReg:v.firstReg||""},cVehicles);
         reloadCVehicles(); notify("Véhicule rattaché à "+c.name); }
       catch(e){ err(e); }
     },
@@ -3092,7 +3136,8 @@ function actionsClient({ clients, cVehicles, reloadClients, reloadCVehicles, not
 }
 
 function ClientRow({ c, orders, vehicles, onSave, onDelete, onAddVehicle, onDelVehicle }) {
-  const [nv,setNv]=useState({plate:"",brand:"",model:""});
+  const NV0={plate:"",brand:"",model:"",firstReg:""};
+  const [nv,setNv]=useState(NV0);
   const snap=()=>({ name:c.name, phone:c.phone, email:c.email, notes:c.notes });
   const [f,sf]=useState(snap);
   useEffect(()=>{ sf(snap()); },[c.id,c.name,c.phone,c.email,c.notes]); // eslint-disable-line
@@ -3123,10 +3168,8 @@ function ClientRow({ c, orders, vehicles, onSave, onDelete, onAddVehicle, onDelV
               ))}
             </div>}
         <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"flex-end"}}>
-          <input value={nv.plate} onChange={e=>setNv(p=>({...p,plate:e.target.value.toUpperCase()}))} placeholder="AB-123-CD" style={{...TI,flex:"1 1 120px"}}/>
-          <input value={nv.brand} onChange={e=>setNv(p=>({...p,brand:e.target.value}))} placeholder="Marque" style={{...TI,flex:"1 1 110px"}}/>
-          <input value={nv.model} onChange={e=>setNv(p=>({...p,model:e.target.value}))} placeholder="Modèle" style={{...TI,flex:"1 1 110px"}}/>
-          <Btn sm ghost onClick={()=>{ if(!plateKey(nv.plate)){alert("Immatriculation requise.");return;} onAddVehicle(c,nv); setNv({plate:"",brand:"",model:""}); }}>+ Rattacher</Btn>
+          <ChampsVehicule v={nv} set={(k,x)=>setNv(p=>({...p,[k]:x}))}/>
+          <Btn sm ghost onClick={()=>{ if(!plateKey(nv.plate)){alert("Immatriculation requise.");return;} onAddVehicle(c,nv); setNv(NV0); }}>+ Rattacher</Btn>
         </div>
       </div>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,flexWrap:"wrap"}}>

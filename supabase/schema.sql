@@ -476,6 +476,12 @@ create policy del_client_vehicles  on client_vehicles for delete using (is_staff
 alter publication supabase_realtime add table client_vehicles;
 
 -- ============================================================================
+-- PHOTOS D'ÉTAT D'ENTRÉE — voir supabase/order-photos.sql (table order_photos).
+-- Ce fichier séparé est à exécuter tel quel : originaux sur le Drive
+-- (<client>/<véhicule>/<date>/), miniature + lien dans la table.
+-- ============================================================================
+
+-- ============================================================================
 -- APRÈS EXÉCUTION :
 --  1) Authentication → Users → Add user : créer un compte staff (email + mdp).
 --     Renseigner le nom dans "User Metadata" : { "name": "M. Dupont" }

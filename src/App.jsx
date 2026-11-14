@@ -12,6 +12,7 @@ import {
   sendDocsByMail,
   listClients, insertClient, updateClient, deleteClient, rememberClient,
   listClientVehicles, deleteClientVehicle, rememberVehicle,
+  listOrderPhotos, listPhotoIndex, insertOrderPhoto, updateOrderPhoto, deleteOrderPhoto, uploadPhoto,
 } from "./data";
 
 // Montants / TVA
@@ -107,11 +108,125 @@ function buildVehicles(orders, documents, history) {
   return [...map.values()].sort((a, b) => String(b.last).localeCompare(String(a.last)));
 }
 
+// ── État d'entrée du véhicule : tour photo ──────────────────────────────────
+// Huit vues extérieures, dans l'ordre d'un tour du véhicule (sens horaire en
+// partant de l'avant) ; x/y = position du repère sur le schéma vu de dessus.
+const VUES = [
+  { id:"avant",          n:1, lbl:"Avant",              x:150, y:30  },
+  { id:"avant_droit",    n:2, lbl:"3/4 avant droit",    x:248, y:70  },
+  { id:"droit",          n:3, lbl:"Côté droit",         x:266, y:190 },
+  { id:"arriere_droit",  n:4, lbl:"3/4 arrière droit",  x:248, y:310 },
+  { id:"arriere",        n:5, lbl:"Arrière",            x:150, y:350 },
+  { id:"arriere_gauche", n:6, lbl:"3/4 arrière gauche", x:52,  y:310 },
+  { id:"gauche",         n:7, lbl:"Côté gauche",        x:34,  y:190 },
+  { id:"avant_gauche",   n:8, lbl:"3/4 avant gauche",   x:52,  y:70  },
+];
+const VUES_PLUS = [
+  { id:"compteur",  n:9,  lbl:"Compteur",  hint:"kilométrage · carburant · voyants", ico:"🎛" },
+  { id:"interieur", n:10, lbl:"Intérieur", hint:"sièges · planche de bord",          ico:"💺" },
+];
+const vueDe = (zone) => VUES.find(v => v.id === zone) || VUES_PLUS.find(v => v.id === zone);
+// Ordre d'affichage : les vues du tour, puis les dommages, chacun par heure de prise.
+const triPhotos = (list) => [...(list || [])].sort((a, b) => {
+  const ra = (vueDe(a.zone) || { n: 99 }).n, rb = (vueDe(b.zone) || { n: 99 }).n;
+  return ra - rb || String(a.takenAt).localeCompare(String(b.takenAt));
+});
+const hm = (iso) => iso ? new Date(iso).toTimeString().slice(0, 5) : "";
+
+// Dossier Drive des photos : <client> / <véhicule> / <date>
+//   ex. « DUPOND Claire / Clio ER134DE / 2026-11-14 »
+const photoPath = (o) => [
+  orderFolder(o),
+  [(o.model || "").trim(), plateKey(o.plate)].filter(Boolean).join(" ") || "Véhicule",
+  o.entryDate || today(),
+];
+const slugNom = (s) => String(s || "").normalize("NFD").replace(/\p{Diacritic}/gu, "")
+  .replace(/[^A-Za-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+const hhmmss = (iso) => { const d = new Date(iso); return [d.getHours(), d.getMinutes(), d.getSeconds()].map(n => String(n).padStart(2, "0")).join(""); };
+// Nom du fichier : « OR-2026-0045_01-Avant », « OR-2026-0045_D083241-rayure-aile ».
+// `bis` : la vue existe déjà sur le Drive — on n'écrase jamais une preuve déposée.
+const photoName = (o, ph) => {
+  const v = vueDe(ph.zone);
+  const rang = v ? String(v.n).padStart(2, "0") : "D" + hhmmss(ph.takenAt);
+  const nom = slugNom(v ? v.lbl : (ph.note || "Dommage")) || "photo";
+  return o.orderNum + "_" + rang + "-" + nom + (v && ph.bis ? "-reprise-" + hhmmss(ph.takenAt).slice(0, 4) : "");
+};
+// Bandeau incrusté dans l'image : date, heure, plaque et vue.
+const photoLegende = (plate, label, d) =>
+  d.toLocaleDateString("fr-FR") + " " + d.toTimeString().slice(0, 5) + "  ·  " + (plateFmt(plate) || "—") +
+  "  ·  " + label + "  ·  Lycée Gallieni – état à l'entrée";
+
+// Lecture du fichier en respectant l'orientation de l'appareil.
+function chargerImage(file) {
+  const viaImg = () => new Promise((res, rej) => {
+    const url = URL.createObjectURL(file), img = new Image();
+    img.onload = () => { URL.revokeObjectURL(url); res(img); };
+    img.onerror = () => { URL.revokeObjectURL(url); rej(new Error("image illisible")); };
+    img.src = url;
+  });
+  return window.createImageBitmap
+    ? window.createImageBitmap(file, { imageOrientation: "from-image" }).catch(viaImg)
+    : viaImg();
+}
+// Photo prête à l'envoi : réduite à 1600 px, horodatage incrusté, + miniature.
+async function preparerPhoto(file, legende) {
+  const img = await chargerImage(file);
+  const r = Math.min(1, 1600 / Math.max(img.width, img.height));
+  const w = Math.round(img.width * r), h = Math.round(img.height * r);
+  const cv = document.createElement("canvas"); cv.width = w; cv.height = h;
+  const ctx = cv.getContext("2d");
+  ctx.drawImage(img, 0, 0, w, h);
+  const fs = Math.max(13, Math.round(w / 48)), pad = Math.round(fs * 0.7), bh = fs + pad * 2;
+  ctx.fillStyle = "rgba(0,0,0,.62)"; ctx.fillRect(0, h - bh, w, bh);
+  ctx.fillStyle = "#fff"; ctx.font = "600 " + fs + "px system-ui,-apple-system,Arial,sans-serif";
+  ctx.textBaseline = "middle";
+  ctx.fillText(legende, pad, h - bh / 2, w - pad * 2);
+  const full = cv.toDataURL("image/jpeg", 0.82);
+  const tr = Math.min(1, 480 / w), tc = document.createElement("canvas");
+  tc.width = Math.round(w * tr); tc.height = Math.round(h * tr);
+  tc.getContext("2d").drawImage(cv, 0, 0, tc.width, tc.height);
+  return { full, thumb: tc.toDataURL("image/jpeg", 0.7) };
+}
+
+// Envoie les photos sur le Drive puis les enregistre. Tant que le dossier
+// n'existe pas, les envois se font un par un (pour ne créer l'arborescence
+// qu'une fois) ; ensuite ils partent trois par trois. Trois essais par photo.
+async function envoyerPhotos(order, liste, auteur, onProgress, aLaReception) {
+  const faites = [], echecs = [];
+  let dossier = { path: photoPath(order) }, folderUrl = "", n = 0;
+  const une = async (ph) => {
+    let err = null;
+    for (let essai = 0; essai < 3; essai++) {
+      try {
+        const r = await uploadPhoto({ ...dossier, name: photoName(order, ph), dataUrl: ph.full });
+        if (r.folderId) { dossier = { folderId: r.folderId }; folderUrl = r.folderUrl || folderUrl; }
+        faites.push(await insertOrderPhoto({
+          orderId: order.id, zone: ph.zone, label: ph.label, damage: !!ph.damage, note: ph.note || "",
+          thumb: ph.thumb, driveId: r.id, driveUrl: r.url, folderUrl: r.folderUrl || folderUrl,
+          takenAt: ph.takenAt, createdBy: auteur, atIntake: !!aLaReception,
+        }));
+        err = null; break;
+      } catch (e) {
+        err = e;
+        // erreur de configuration : réessayer ne changerait rien
+        if (/script Google|Non authentifié|Réservé|order_photos/.test(e.message || "")) break;
+      }
+    }
+    if (err) echecs.push({ ph, error: err.message || String(err) });
+    n++; if (onProgress) onProgress(n, liste.length);
+  };
+  if (onProgress) onProgress(0, liste.length);
+  let i = 0;
+  while (i < liste.length && !dossier.folderId) await une(liste[i++]);
+  for (; i < liste.length; i += 3) await Promise.all(liste.slice(i, i + 3).map(une));
+  return { faites, echecs, folderUrl };
+}
+
 // Groupes de tarifs présents dans le catalogue, dans l'ordre d'affichage.
 const tarifGroups = (list) => (list||[]).reduce((a,t) => a.includes(t.group) ? a : [...a, t.group], []);
 // Archive un OR en PDF sur le Drive (asynchrone, non bloquant).
-function archiveToDrive(order, notify) {
-  archiveOrder({ html: orderHTML(order), folder: orderFolder(order), orderNum: order.orderNum })
+function archiveToDrive(order, notify, photos) {
+  archiveOrder({ html: orderHTML(order, photos), folder: orderFolder(order), orderNum: order.orderNum })
     .then(() => notify && notify("Ordre archivé sur le Drive"))
     .catch((e) => { console.error("[DMS] archivage Drive", e); notify && notify("Archivage Drive non effectué : " + (e.message || e), "error"); });
 }
@@ -268,6 +383,27 @@ function useTariffs(dep) {
   const { items, reload } = useCollection(listTariffs, "tariffs", dep);
   return { tariffs: items, reloadTariffs: reload };
 }
+// Index léger des photos d'état d'entrée : { [orderId]: { n, d } }.
+// `pret` vaut false tant que la table `order_photos` n'existe pas (SQL non exécuté).
+function usePhotoIndex(dep) {
+  const [idx, setIdx] = useState({ pret: null, parOrdre: {} });
+  const reload = useCallback(() => {
+    listPhotoIndex()
+      .then(rows => {
+        const m = {};
+        rows.forEach(r => { const e = m[r.orderId] || (m[r.orderId] = { n: 0, d: 0 }); e.n++; if (r.damage) e.d++; });
+        setIdx({ pret: true, parOrdre: m });
+      })
+      .catch(e => { console.warn("[DMS] photos d'état d'entrée indisponibles", e?.message || e); setIdx({ pret: false, parOrdre: {} }); });
+  }, []);
+  useEffect(() => {
+    reload();
+    const ch = supabase.channel("rt-order_photos")
+      .on("postgres_changes", { event: "*", schema: "public", table: "order_photos" }, reload).subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, [reload, dep]);
+  return idx;
+}
 function useClients(dep) {
   const { items, reload } = useCollection(listClients, "clients", dep);
   return { clients: items, reloadClients: reload };
@@ -352,7 +488,7 @@ function toCSV(orders) {
 }
 
 // ── PDF ──
-function orderHTML(order) {
+function orderHTML(order, photos) {
   const isPeda = order.vtype === "peda";
   const sLabel = VS[order.status] ? VS[order.status].label : "En attente";
   const sColor = order.status==="termine" ? "#065f46" : order.status==="en_cours" ? "#1e40af" : "#92400e";
@@ -384,6 +520,36 @@ function orderHTML(order) {
         <tbody><tr>${cell(ev.opType==="non_elec")}${cell(ev.opType==="hors_tension")}${cell(ev.opType==="voisinage")}${cell(ev.opType==="sous_tension")}</tr></tbody></table>
       <table class="trc"><thead><tr><th style="width:24%">Étape</th><th>Attestation</th><th class="c" style="width:19%">Date / Heure</th><th class="c" style="width:13%">Visa</th></tr></thead><tbody>${rows}</tbody></table>
     </div>`;
+  })();
+  // État du véhicule à l'entrée : planche des photos, sur une page à part.
+  // `atIntake` distingue les photos prises à l'ouverture de l'ordre (avant la
+  // signature du client) de celles ajoutées ensuite : le document ne prête pas
+  // à la signature une portée qu'elle n'a pas.
+  const vues = triPhotos(photos);
+  const reception = vues.filter(ph => ph.atIntake), ajouts = vues.filter(ph => !ph.atIntake);
+  const signeEtat = !!order.signature && reception.length > 0;
+  const etatBlock = !vues.length ? "" : (() => {
+    const dommages = vues.filter(ph => ph.damage);
+    const base = reception.length ? reception : vues;
+    const temps = base.map(ph => String(ph.takenAt)).sort();
+    const auteurs = [...new Set(vues.map(ph => ph.createdBy).filter(Boolean))].join(", ");
+    return `<div class="pb">
+<div class="sec"><div class="sh">État du véhicule à l'entrée – ${vues.length} photo${vues.length>1?"s":""}</div>
+<div class="etat">${reception.length
+  ? `${reception.length} photo${reception.length>1?"s":""} prise${reception.length>1?"s":""} le ${fD(temps[0])} de ${hm(temps[0])} à ${hm(temps[temps.length-1])}, à l'ouverture de l'ordre de réparation${signeEtat?", avant la signature du client":""}.`
+  : `Photos prises le ${fD(temps[0])} de ${hm(temps[0])} à ${hm(temps[temps.length-1])}.`}${
+  reception.length&&ajouts.length?` ${ajouts.length} photo${ajouts.length>1?"s":""} ajoutée${ajouts.length>1?"s":""} ensuite (signalée${ajouts.length>1?"s":""} ci-dessous).`:""}${
+  auteurs?" Prises de vue : "+esc(auteurs)+".":""} Chaque original, en pleine résolution, porte la date, l'heure et l'immatriculation incrustées ; ils sont conservés par l'atelier.</div>
+${dommages.length
+  ? `<table class="dmg"><thead><tr><th style="width:34%">Dommage relevé</th><th>Remarque</th><th class="c" style="width:22%">Relevé le</th></tr></thead><tbody>${
+      dommages.map(ph => `<tr><td>${esc(ph.label)}</td><td>${esc(ph.note||"—")}</td><td class="c">${fD(ph.takenAt)} ${hm(ph.takenAt)}</td></tr>`).join("")}</tbody></table>`
+  : `<div class="etat ras">Aucun dommage relevé lors du tour du véhicule.</div>`}
+<div class="phg">${vues.map(ph =>
+  `<div class="ph${ph.damage?" d":""}"><div class="phb"><img src="${ph.thumb}"/></div><div class="phl">${esc(ph.label)} · ${hm(ph.takenAt)}${ph.damage?" · <b>dommage</b>":""}${
+    reception.length&&!ph.atIntake?` · <i>ajoutée le ${fD(ph.takenAt)}</i>`:""}</div></div>`).join("")}</div>
+</div>
+<div class="foot">Lycée Gallieni – BTS Maintenance des Véhicules &nbsp;|&nbsp; ${esc(order.orderNum)} &nbsp;|&nbsp; État du véhicule à l'entrée &nbsp;|&nbsp; ${esc(plateFmt(order.plate))}</div>
+</div>`;
   })();
   // §6 de la trame : engagement et accord (montant annoncé, restitution)
   const engBlock = !ev ? "" : `<div class="sec"><div class="sh">Engagement et accord</div><div class="grid g3">
@@ -420,7 +586,7 @@ function orderHTML(order) {
       </div>
     </div>`;
   const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(order.orderNum)}</title>
-<style>*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#111;background:#fff;}.page{padding:12mm 15mm;max-width:210mm;margin:0 auto;}.hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #1d4ed8;padding-bottom:10px;margin-bottom:14px;}.bn{font-size:20px;font-weight:bold;color:#1d4ed8;}.bs{font-size:10px;color:#555;margin-top:2px;}.on{font-size:22px;font-weight:bold;color:#1d4ed8;text-align:right;}.om{font-size:10px;color:#555;text-align:right;margin-top:2px;}.sec{margin-bottom:10px;}.sh{background:#1d4ed8;color:#fff;padding:4px 10px;font-size:11px;font-weight:bold;margin-bottom:6px;}.grid{display:grid;gap:6px 10px;}.g2{grid-template-columns:1fr 1fr;}.g3{grid-template-columns:1fr 1fr 1fr;}.g5{grid-template-columns:repeat(5,1fr);}.lb{font-size:9px;color:#888;text-transform:uppercase;letter-spacing:.4px;margin-bottom:2px;}.vl{font-size:12px;font-weight:bold;border-bottom:1px solid #ccc;padding-bottom:2px;min-height:17px;}.bdg{display:inline-block;padding:2px 10px;border-radius:20px;font-size:10px;font-weight:bold;}.tasks{display:grid;grid-template-columns:1fr 1fr;gap:0;}.ti{display:flex;align-items:center;gap:6px;padding:4px 5px;border-bottom:1px dotted #e5e5e5;font-size:11px;}.ti.odd{background:#f9f9f9;}.cb{width:13px;height:13px;border:1.5px solid #555;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;font-size:10px;font-weight:bold;}.ck{border-color:#059669;background:#d1fae5;color:#059669;}.td{color:#059669;font-weight:bold;}.tby{margin-left:auto;font-size:9px;color:#888;white-space:nowrap;}.tb{border:1px solid #ddd;padding:6px 8px;min-height:52px;font-size:11px;line-height:1.5;white-space:pre-wrap;}.sr{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:16px;padding-top:12px;border-top:2px solid #1d4ed8;}.sl{font-size:10px;color:#333;font-weight:bold;margin-bottom:5px;}.sb{border:1px solid #999;height:82px;display:flex;align-items:center;justify-content:center;background:#fafafa;overflow:hidden;}.sn{font-size:9px;color:#888;text-align:center;margin-top:3px;}.foot{margin-top:10px;padding-top:8px;border-top:1px solid #ddd;font-size:9px;color:#aaa;text-align:center;}.mention{margin-top:14px;padding:7px 12px;border:1px solid #ddd;border-radius:3px;background:#fafafa;font-size:8.5px;color:#555;font-style:italic;line-height:1.5;text-align:center;}.twocol{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;}.warn{border:1.5px solid #b91c1c;background:#fef2f2;color:#b91c1c;padding:6px 10px;font-size:10.5px;font-weight:bold;margin-bottom:10px;}table.opt,table.trc,table.wk{width:100%;border-collapse:collapse;font-size:10.5px;}table.opt th,table.trc th,table.wk th{background:#1d4ed8;color:#fff;padding:4px 6px;font-size:9.5px;text-align:left;border:1px solid #1d4ed8;}table.opt td,table.trc td,table.wk td{border:1px solid #ccc;padding:4px 6px;vertical-align:top;}table.opt{margin-bottom:6px;}table.opt th{text-align:center;}.oc{height:24px;text-align:center;font-size:15px;font-weight:bold;color:#111;}.oc.on{background:#dbeafe;color:#1d4ed8;}.trc .el{font-weight:bold;background:#f4f7ff;}.trc .vz{background:#fafafa;}td.c,th.c{text-align:center;}td.r,th.r{text-align:right;}.wk .ok{color:#059669;font-weight:bold;}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}.page{padding:8mm 12mm;}}</style>
+<style>*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#111;background:#fff;}.page{padding:12mm 15mm;max-width:210mm;margin:0 auto;}.hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #1d4ed8;padding-bottom:10px;margin-bottom:14px;}.bn{font-size:20px;font-weight:bold;color:#1d4ed8;}.bs{font-size:10px;color:#555;margin-top:2px;}.on{font-size:22px;font-weight:bold;color:#1d4ed8;text-align:right;}.om{font-size:10px;color:#555;text-align:right;margin-top:2px;}.sec{margin-bottom:10px;}.sh{background:#1d4ed8;color:#fff;padding:4px 10px;font-size:11px;font-weight:bold;margin-bottom:6px;}.grid{display:grid;gap:6px 10px;}.g2{grid-template-columns:1fr 1fr;}.g3{grid-template-columns:1fr 1fr 1fr;}.g5{grid-template-columns:repeat(5,1fr);}.lb{font-size:9px;color:#888;text-transform:uppercase;letter-spacing:.4px;margin-bottom:2px;}.vl{font-size:12px;font-weight:bold;border-bottom:1px solid #ccc;padding-bottom:2px;min-height:17px;}.bdg{display:inline-block;padding:2px 10px;border-radius:20px;font-size:10px;font-weight:bold;}.tasks{display:grid;grid-template-columns:1fr 1fr;gap:0;}.ti{display:flex;align-items:center;gap:6px;padding:4px 5px;border-bottom:1px dotted #e5e5e5;font-size:11px;}.ti.odd{background:#f9f9f9;}.cb{width:13px;height:13px;border:1.5px solid #555;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;font-size:10px;font-weight:bold;}.ck{border-color:#059669;background:#d1fae5;color:#059669;}.td{color:#059669;font-weight:bold;}.tby{margin-left:auto;font-size:9px;color:#888;white-space:nowrap;}.tb{border:1px solid #ddd;padding:6px 8px;min-height:52px;font-size:11px;line-height:1.5;white-space:pre-wrap;}.sr{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:16px;padding-top:12px;border-top:2px solid #1d4ed8;}.sl{font-size:10px;color:#333;font-weight:bold;margin-bottom:5px;}.sb{border:1px solid #999;height:82px;display:flex;align-items:center;justify-content:center;background:#fafafa;overflow:hidden;}.sn{font-size:9px;color:#888;text-align:center;margin-top:3px;}.foot{margin-top:10px;padding-top:8px;border-top:1px solid #ddd;font-size:9px;color:#aaa;text-align:center;}.mention{margin-top:14px;padding:7px 12px;border:1px solid #ddd;border-radius:3px;background:#fafafa;font-size:8.5px;color:#555;font-style:italic;line-height:1.5;text-align:center;}.twocol{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;}.warn{border:1.5px solid #b91c1c;background:#fef2f2;color:#b91c1c;padding:6px 10px;font-size:10.5px;font-weight:bold;margin-bottom:10px;}table.opt,table.trc,table.wk{width:100%;border-collapse:collapse;font-size:10.5px;}table.opt th,table.trc th,table.wk th{background:#1d4ed8;color:#fff;padding:4px 6px;font-size:9.5px;text-align:left;border:1px solid #1d4ed8;}table.opt td,table.trc td,table.wk td{border:1px solid #ccc;padding:4px 6px;vertical-align:top;}table.opt{margin-bottom:6px;}table.opt th{text-align:center;}.oc{height:24px;text-align:center;font-size:15px;font-weight:bold;color:#111;}.oc.on{background:#dbeafe;color:#1d4ed8;}.trc .el{font-weight:bold;background:#f4f7ff;}.trc .vz{background:#fafafa;}td.c,th.c{text-align:center;}td.r,th.r{text-align:right;}.wk .ok{color:#059669;font-weight:bold;}.pb{page-break-before:always;break-before:page;padding-top:4mm;}.etat{font-size:10px;color:#333;line-height:1.5;margin-bottom:8px;}.etat.ras{border:1px solid #16a34a;background:#f0fdf4;color:#166534;padding:5px 10px;font-weight:bold;}table.dmg{width:100%;border-collapse:collapse;font-size:10.5px;margin-bottom:8px;}table.dmg th{background:#c2410c;color:#fff;padding:4px 6px;font-size:9.5px;text-align:left;border:1px solid #c2410c;}table.dmg td{border:1px solid #ccc;padding:4px 6px;vertical-align:top;}.phg{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;}.phb{height:42mm;display:flex;align-items:center;justify-content:center;background:#eef2f7;border:1px solid #bbb;overflow:hidden;}.phb img{max-width:100%;max-height:42mm;display:block;}.ph.d .phb{border:2px solid #c2410c;}.phl{font-size:8.5px;color:#444;margin-top:2px;}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}.page{padding:8mm 12mm;}}</style>
 </head><body><div class="page">
 <div class="hdr"><div><div class="bn">Lycée Gallieni</div><div class="bs">Atelier BTS Maintenance des Véhicules</div><div class="bs" style="font-weight:bold;margin-top:5px;font-size:12px;">ORDRE DE RÉPARATION${ev?" – VÉHICULE ÉLECTRIQUE / HYBRIDE":""}</div></div>
 <div><div class="on">${esc(order.orderNum)}</div><div class="om">Réf. dossier : ${esc(order.fileRef||"—")}</div><div class="om">Entrée le ${fD(order.entryDate)} à ${esc(order.entryTime||"—")}</div><div class="om">Créé par : ${esc(order.createdBy||"—")}</div>
@@ -449,11 +615,12 @@ ${evBlock}
 ${exitBlock}
 ${engBlock}
 <div class="sr">
-<div><div class="sl">Signature du client${ev?", précédée de la mention « bon pour accord »":" (accord pour les travaux)"}</div><div class="sb">${sigHTML}</div><div class="sn">${esc(order.clientName||(isPeda?order.teacher||"":""))}</div></div>
+<div><div class="sl">Signature du client${ev?", précédée de la mention « bon pour accord »":" (accord pour les travaux"+(signeEtat?" et état du véhicule constaté à l'entrée":"")+")"}</div><div class="sb">${sigHTML}</div><div class="sn">${esc(order.clientName||(isPeda?order.teacher||"":""))}</div></div>
 <div><div class="sl">${ev?"Nom et signature du réceptionnaire":"Visa du technicien / enseignant"}</div><div class="sb"><div style="font-size:11px;color:#ccc;text-align:center;line-height:80px;">..................................</div></div><div class="sn">${isPeda?esc(order.teacher||""):""}</div></div>
 </div>
 ${mentionHTML(MENTION_PEDA)}
-<div class="foot">Lycée Gallieni – BTS Maintenance des Véhicules &nbsp;|&nbsp; ${esc(order.orderNum)} &nbsp;|&nbsp; Imprimé le ${new Date().toLocaleDateString("fr-FR")}</div>
+<div class="foot">Lycée Gallieni – BTS Maintenance des Véhicules &nbsp;|&nbsp; ${esc(order.orderNum)} &nbsp;|&nbsp; Imprimé le ${new Date().toLocaleDateString("fr-FR")}${vues.length?" &nbsp;|&nbsp; suivi de l'état du véhicule à l'entrée ("+vues.length+" photo"+(vues.length>1?"s":"")+")":""}</div>
+${etatBlock}
 </div></body></html>`;
   return html;
 }
@@ -463,8 +630,8 @@ function orderFolder(order) {
   return order.vtype === "peda" ? "Pédagogique" : (order.clientName || "").trim() || "Client sans nom";
 }
 
-function generatePDF(order) {
-  const html = orderHTML(order);
+function generatePDF(order, photos) {
+  const html = orderHTML(order, photos);
   try {
     const blob = new Blob([html], { type:"text/html;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
@@ -734,7 +901,7 @@ function Sidebar({ user, page, nav, logout }) {
   );
 }
 
-function Dashboard({ orders, nav, selOrd }) {
+function Dashboard({ orders, nav, selOrd, photoIdx }) {
   const active = orders.filter(o => o.status !== "termine");
   const stats = [
     { l:"En atelier",   v:active.length,                                              c:"#2563eb" },
@@ -758,14 +925,14 @@ function Dashboard({ orders, nav, selOrd }) {
         {active.length===0
           ? <Crd><p style={{ color:C.mut, textAlign:"center", margin:0 }}>Aucun véhicule en atelier</p></Crd>
           : <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(270px,1fr))", gap:12 }}>
-              {active.map(o => <OrdCard key={o.id} o={o} onClick={() => { selOrd(o.id); nav("order-detail"); }}/>)}
+              {active.map(o => <OrdCard key={o.id} o={o} ph={(photoIdx||{})[o.id]} onClick={() => { selOrd(o.id); nav("order-detail"); }}/>)}
             </div>
         }
       </div>
     </div>
   );
 }
-function OrdCard({ o, onClick }) {
+function OrdCard({ o, ph, onClick }) {
   const dn=o.tasks?o.tasks.filter(t=>t.done).length:0, tot=o.tasks?o.tasks.length:0;
   const isPeda = o.vtype==="peda";
   return (
@@ -787,6 +954,7 @@ function OrdCard({ o, onClick }) {
         {o.ev && <span style={{ fontSize:11, padding:"2px 8px", borderRadius:999, fontWeight:600, background:"#fef9c3", color:"#a16207" }}>⚡ VE/VH</span>}
         {o.km && <span style={{ fontSize:11, color:C.mut }}>📍 {Number(o.km).toLocaleString("fr-FR")} km</span>}
         {o.signature && <span style={{ fontSize:11, color:"#059669" }}>✍ Signé</span>}
+        {ph && <span style={{ fontSize:11, color: ph.d ? "#c2410c" : "#2563eb", fontWeight:600 }}>📸 {ph.n}{ph.d ? " · ⚠ " + ph.d : ""}</span>}
       </div>
       {tot>0 && (
         <div>
@@ -802,7 +970,7 @@ function OrdCard({ o, onClick }) {
   );
 }
 
-function OrdersList({ orders, nav, selOrd }) {
+function OrdersList({ orders, nav, selOrd, photoIdx }) {
   const [scope,ssc]=useState("client");
   const [flt,sf]=useState("active"); const [q,sq]=useState("");
   const sc = SCOPES.find(x => x.v === scope) || SCOPES[0];
@@ -860,6 +1028,7 @@ function OrdersList({ orders, nav, selOrd }) {
                       <Badge status={o.status}/>
                       <span style={{ fontSize:11, color:isPeda?"#c2410c":"#1d4ed8" }}>{isPeda?"🎓":"👤"}</span>
                       {o.signature && <span style={{ fontSize:11, color:"#059669" }}>✍</span>}
+                      {(photoIdx||{})[o.id] && <span style={{ fontSize:11, fontWeight:600, color: photoIdx[o.id].d ? "#c2410c" : "#2563eb" }}>📸 {photoIdx[o.id].n}{photoIdx[o.id].d ? " · ⚠ " + photoIdx[o.id].d : ""}</span>}
                     </div>
                     <div style={{ color:C.txt, fontWeight:600 }}>{plateFmt(o.plate)} – {o.brand} {o.model}</div>
                     <div style={{ color:C.sub, fontSize:12 }}>{isPeda?(o.teacher||"—"):(o.clientName||"—")}</div>
@@ -936,8 +1105,11 @@ function StudentPicker({ students, selected, onToggle }) {
   );
 }
 
-function NewOrderForm({ addOrder, teachers, students, clients, reloadClients, cVehicles, reloadCVehicles, user, nav, selOrd, notify }) {
+function NewOrderForm({ addOrder, teachers, students, clients, reloadClients, cVehicles, reloadCVehicles, photosPret, user, nav, selOrd, notify }) {
   const [busy,sbusy] = useState(false);
+  // Tour photo : gardé en mémoire jusqu'à la création de l'ordre, puis envoyé.
+  const [photos,setPhotosBrut] = useState([]);
+  const [envoi,setEnvoi] = useState(null), [echec,setEchec] = useState(null);
   const [f,sf] = useState({
     plate:"", brand:"", model:"", firstReg:"", km:"", vin:"", vtype:"client",
     clientName:"", clientPhone:"", clientEmail:"", entryDate:today(), entryTime:tNow(),
@@ -950,6 +1122,12 @@ function NewOrderForm({ addOrder, teachers, students, clients, reloadClients, cV
   });
   const set=(k,v)=>sf(p=>({...p,[k]:v}));
   const isEv=!!f.ev;
+  // La signature du client vaut pour l'état constaté : si les photos changent
+  // après coup, elle est effacée et doit être refaite.
+  const setPhotos=(maj)=>{
+    setPhotosBrut(maj);
+    if(f.signature){ set("signature",""); notify("Les photos ont changé : la signature du client est à refaire","error"); }
+  };
   // Véhicules déjà rattachés au client choisi, et propriétaire d'une plaque saisie.
   const cli=findClient(clients,f.clientName);
   const sesVehicules=cli?clientVehicles(cVehicles,cli.id):[];
@@ -1002,8 +1180,15 @@ function NewOrderForm({ addOrder, teachers, students, clients, reloadClients, cV
           reloadCVehicles&&reloadCVehicles();
         }
       }
-      selOrd(created.id);nav("order-detail");notify((f.ev?"Ordre VE/VH ":"Ordre de réparation ")+created.orderNum+" créé");
-      archiveToDrive(created, notify);   // archivage PDF sur le Drive (création)
+      // Photos d'état d'entrée : envoyées avant de quitter l'écran (elles ne
+      // vivent qu'en mémoire), puis jointes à l'ordre archivé.
+      let deposees=[];
+      if(photos.length) deposees=await envoyerAvecReprise(created,photos,user.name,setEnvoi,setEchec,true);
+      selOrd(created.id);nav("order-detail");
+      notify((f.ev?"Ordre VE/VH ":"Ordre de réparation ")+created.orderNum+" créé"+(deposees.length?" · "+deposees.length+" photo"+(deposees.length>1?"s":"")+" sur le Drive":""));
+      // L'archivage PDF est réservé au personnel : pour un élève, l'ordre sera
+      // archivé à la clôture par l'enseignant.
+      if(user.role!=="eleve") archiveToDrive(created, notify, deposees);
     } catch(e){ console.error(e); notify("Erreur lors de la création : "+(e.message||e),"error"); }
     finally { sbusy(false); }
   };
@@ -1098,6 +1283,24 @@ function NewOrderForm({ addOrder, teachers, students, clients, reloadClients, cV
             </div>
           </div>
         )}
+        {photosPret===true && (
+          <div>
+            <SecTitle>📸 État du véhicule à l'entrée</SecTitle>
+            <p style={{ color:C.mut, fontSize:12, margin:"0 0 10px" }}>
+              Faites le tour du véhicule avec le client : touchez un repère, l'appareil photo s'ouvre
+              (téléphone tenu <b>à l'horizontale</b> de préférence).
+              Chaque photo est horodatée, rangée sur le Drive dans
+              {" "}<b>{photoPath({ ...f, clientName:f.clientName }).join(" › ")}</b> et jointe à l'ordre de réparation.
+            </p>
+            <TourPhoto photos={photos} onChange={setPhotos} plate={f.plate}/>
+          </div>
+        )}
+        {photosPret===false && user.role!=="eleve" && (
+          <div style={{ background:"#fef9c3", border:"1px solid #fde047", borderRadius:10, padding:"10px 14px", margin:"16px 0 0", fontSize:12, color:"#854d0e" }}>
+            <b>📸 État du véhicule en photos</b> — une dernière étape d'installation reste à faire :
+            exécuter le fichier <code>supabase/order-photos.sql</code> dans Supabase (SQL Editor).
+          </div>
+        )}
         <SecTitle>🔍 Motif d'entrée</SecTitle>
         <TA value={f.reason} onChange={v=>set("reason",v)} placeholder={isEv?"Décrire le motif d'entrée dans les termes du client…":"Décrire le motif d'entrée…"} rows={3}/>
         {isEv && (
@@ -1176,7 +1379,8 @@ function NewOrderForm({ addOrder, teachers, students, clients, reloadClients, cV
         )}
         <SecTitle>✍ Signature du client (accord pour les travaux)</SecTitle>
         <div style={{ background:"#f1f5f9", borderRadius:10, padding:16, border:"1px solid "+C.bdr }}>
-          <p style={{ color:C.sub, fontSize:12, marginBottom:12 }}>Le client certifie avoir pris connaissance des travaux à réaliser et donne son accord.</p>
+          <p style={{ color:C.sub, fontSize:12, marginBottom:12 }}>Le client certifie avoir pris connaissance des travaux à réaliser et donne son accord.
+            {photos.length>0 && <b> Il reconnaît l'état du véhicule constaté à l'entrée ({photos.length} photo{photos.length>1?"s":""}{photos.some(x=>x.damage)?", dont "+photos.filter(x=>x.damage).length+" dommage"+(photos.filter(x=>x.damage).length>1?"s":"")+" signalé"+(photos.filter(x=>x.damage).length>1?"s":""):""}).</b>}</p>
           {f.signature ? (
             <div>
               <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:8 }}>
@@ -1194,6 +1398,7 @@ function NewOrderForm({ addOrder, teachers, students, clients, reloadClients, cV
           <Btn onClick={submit} disabled={busy}>{busy?"Création…":(isEv?"⚡ Créer l'OR véhicule électrique / hybride":"✅ Créer l'ordre de réparation")}</Btn>
         </div>
       </Crd>
+      <EnvoiPhotos envoi={envoi} echec={echec}/>
     </div>
   );
 }
@@ -1435,6 +1640,287 @@ function VehiclesView({ orders, documents, vehicleHistory, clients, cVehicles, u
 }
 
 
+// ── Tour photo : schéma, capture, envoi ─────────────────────────────────────
+
+// Véhicule vu de dessus : un repère par vue, à toucher pour photographier.
+// etat : { [zone]: "ok" | "dommage" | "attente" }
+function SchemaVehicule({ etat, onPick, disabled }) {
+  const style = (e) => e === "dommage" ? { f:"#f97316", s:"#c2410c", t:"#fff", c:"!" }
+                     : e === "ok"      ? { f:"#16a34a", s:"#15803d", t:"#fff", c:"✓" }
+                     : e === "attente" ? { f:"#dbeafe", s:"#2563eb", t:"#2563eb", c:"…" }
+                     :                   { f:"#ffffff", s:"#2563eb", t:"#2563eb", c:null };
+  return (
+    <svg viewBox="0 0 300 380" role="img" aria-label="Schéma du véhicule vu de dessus"
+      style={{ width:"100%", maxWidth:300, display:"block", margin:"0 auto", touchAction:"manipulation" }}>
+      <rect x="102" y="64" width="96" height="252" rx="36" fill="#e2e8f0" stroke="#94a3b8" strokeWidth="2"/>
+      <path d="M116 128 Q150 108 184 128 L178 156 Q150 146 122 156 Z" fill="#bfdbfe" stroke="#94a3b8" strokeWidth="1.5"/>
+      <rect x="122" y="160" width="56" height="84" rx="8" fill="#f8fafc" stroke="#cbd5e1" strokeWidth="1.5"/>
+      <path d="M124 250 Q150 258 176 250 L182 274 Q150 286 118 274 Z" fill="#bfdbfe" stroke="#94a3b8" strokeWidth="1.5"/>
+      {[[94,92],[198,92],[94,252],[198,252]].map(([x,y],i) => <rect key={i} x={x} y={y} width="8" height="38" rx="3" fill="#475569"/>)}
+      <rect x="92" y="136" width="10" height="7" rx="2" fill="#94a3b8"/><rect x="198" y="136" width="10" height="7" rx="2" fill="#94a3b8"/>
+      <rect x="112" y="68" width="18" height="6" rx="3" fill="#fde68a"/><rect x="170" y="68" width="18" height="6" rx="3" fill="#fde68a"/>
+      <rect x="112" y="306" width="18" height="6" rx="3" fill="#fca5a5"/><rect x="170" y="306" width="18" height="6" rx="3" fill="#fca5a5"/>
+      <text x="150" y="98" textAnchor="middle" fontSize="11" fontWeight="700" fill="#64748b">AVANT</text>
+      <text x="150" y="300" textAnchor="middle" fontSize="11" fontWeight="700" fill="#64748b">ARRIÈRE</text>
+      {VUES.map(v => {
+        const e = etat[v.id], k = style(e);
+        return (
+          <g key={v.id} onClick={() => { if (!disabled) onPick(v.id); }}
+            style={{ cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? .45 : 1 }}>
+            <title>{v.lbl}</title>
+            <circle cx={v.x} cy={v.y} r="23" fill={k.f} stroke={k.s} strokeWidth="2.5" strokeDasharray={e ? undefined : "5 4"}/>
+            <text x={v.x} y={v.y + 6} textAnchor="middle" fontSize="17" fontWeight="700" fill={k.t}>{k.c || v.n}</text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+// Capture guidée. `photos` : [{ key, zone, label, damage, note, full, thumb, takenAt }]
+// `onChange` reçoit une fonction (ancienne liste → nouvelle), comme un setState.
+// `deja` : zones déjà photographiées et déposées (affichées comme faites).
+function TourPhoto({ photos, onChange, plate, deja }) {
+  const input = useRef(null), cible = useRef(null);
+  const [attente, setAttente] = useState("");
+  const pret = !!plateKey(plate);
+  const pick = (zone) => { if (!pret || attente) return; cible.current = zone; if (input.current) input.current.click(); };
+  const onFile = async (e) => {
+    const file = e.target.files && e.target.files[0]; e.target.value = "";
+    const zone = cible.current; if (!file || !zone) return;
+    const v = vueDe(zone), label = v ? v.lbl : "Dommage / détail", d = new Date();
+    setAttente(zone);
+    try {
+      const img = await preparerPhoto(file, photoLegende(plate, label, d));
+      const ph = { key: gid(), zone, label, damage: zone === "dommage", note: "", takenAt: d.toISOString(), ...img };
+      // une vue du tour remplace la précédente ; les dommages s'additionnent
+      onChange(prev => zone === "dommage" ? [...prev, ph] : [...prev.filter(p => p.zone !== zone), ph]);
+    } catch (err) { alert("Photo inutilisable : " + (err.message || err)); }
+    finally { setAttente(""); }
+  };
+  const maj = (key, patch) => onChange(prev => prev.map(p => p.key === key ? { ...p, ...patch } : p));
+  const etat = {};
+  (deja || []).forEach(z => { etat[z] = "ok"; });
+  photos.forEach(p => { if (p.zone !== "dommage") etat[p.zone] = p.damage ? "dommage" : "ok"; });
+  if (attente && attente !== "dommage") etat[attente] = "attente";
+  const nExt = VUES.filter(v => etat[v.id] && etat[v.id] !== "attente").length;
+  const tuile = { display:"flex", alignItems:"center", gap:10, textAlign:"left", padding:"10px 12px", borderRadius:10,
+    cursor: pret ? "pointer" : "not-allowed", fontFamily:"inherit", color:C.txt, opacity: pret ? 1 : .5, width:"100%" };
+  return (
+    <div>
+      <input ref={input} type="file" accept="image/*" capture="environment" onChange={onFile} style={{ display:"none" }}/>
+      {!pret && (
+        <p style={{ background:"#fef9c3", border:"1px solid #fde047", borderRadius:8, padding:"8px 12px", fontSize:12, color:"#854d0e", margin:"0 0 10px" }}>
+          Saisissez d'abord l'<b>immatriculation</b> : elle est incrustée, avec la date et l'heure, dans chaque photo.
+        </p>
+      )}
+      <div style={{ display:"flex", gap:16, flexWrap:"wrap", alignItems:"flex-start" }}>
+        <div style={{ flex:"1 1 240px", maxWidth:320, margin:"0 auto" }}>
+          <SchemaVehicule etat={etat} onPick={pick} disabled={!pret}/>
+          <div style={{ textAlign:"center", fontSize:12, color: nExt === 8 ? "#15803d" : C.sub, fontWeight:600, marginTop:4 }}>
+            {nExt === 8 ? "✅ Tour complet — 8 vues sur 8" : nExt + " vue" + (nExt > 1 ? "s" : "") + " sur 8 · touchez un repère pour photographier"}
+          </div>
+        </div>
+        <div style={{ flex:"1 1 220px", display:"flex", flexDirection:"column", gap:8 }}>
+          {VUES_PLUS.map(v => {
+            const e = etat[v.id], fait = e === "ok" || e === "dommage";
+            return (
+              <button key={v.id} type="button" onClick={() => pick(v.id)}
+                style={{ ...tuile, background: fait ? "#dcfce7" : "#f8fafc", border:"1px solid " + (fait ? "#16a34a" : C.bdr) }}>
+                <span style={{ fontSize:22 }}>{e === "attente" ? "⏳" : fait ? "✅" : v.ico}</span>
+                <span><b style={{ fontSize:13 }}>{v.lbl}</b><span style={{ display:"block", fontSize:11, color:C.mut }}>{v.hint}</span></span>
+              </button>
+            );
+          })}
+          <button type="button" onClick={() => pick("dommage")}
+            style={{ ...tuile, background:"#fff7ed", border:"1px dashed #f97316" }}>
+            <span style={{ fontSize:22 }}>{attente === "dommage" ? "⏳" : "📷"}</span>
+            <span><b style={{ fontSize:13, color:"#c2410c" }}>+ Dommage / détail</b>
+              <span style={{ display:"block", fontSize:11, color:C.mut }}>rayure, choc, jante… autant que nécessaire</span></span>
+          </button>
+        </div>
+      </div>
+      {photos.length > 0 && (
+        <div style={{ display:"flex", flexDirection:"column", gap:8, marginTop:12 }}>
+          {triPhotos(photos).map(p => (
+            <div key={p.key} style={{ display:"flex", gap:10, alignItems:"flex-start", padding:8, borderRadius:10,
+              border:"1px solid " + (p.damage ? "#fdba74" : C.bdr), background: p.damage ? "#fff7ed" : "#f8fafc" }}>
+              <img src={p.thumb} alt={p.label} onClick={() => { if (p.zone !== "dommage") pick(p.zone); }}
+                title={p.zone !== "dommage" ? "Toucher pour reprendre cette vue" : ""}
+                style={{ width:96, height:72, objectFit:"cover", borderRadius:6, flexShrink:0, cursor: p.zone !== "dommage" ? "pointer" : "default" }}/>
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", gap:8, alignItems:"baseline" }}>
+                  <b style={{ fontSize:13, color:C.txt }}>{p.label}</b>
+                  <span style={{ fontSize:11, color:C.mut, whiteSpace:"nowrap" }}>{hm(p.takenAt)}</span>
+                </div>
+                <label style={{ display:"flex", alignItems:"center", gap:6, fontSize:12, margin:"4px 0", cursor:"pointer", color: p.damage ? "#c2410c" : C.sub }}>
+                  <input type="checkbox" checked={!!p.damage} onChange={e => maj(p.key, { damage: e.target.checked })}/>
+                  ⚠ Dommage visible sur cette photo
+                </label>
+                {p.damage && (
+                  <input value={p.note} onChange={e => maj(p.key, { note: e.target.value })} placeholder="Ex. rayure 10 cm, aile avant droite"
+                    style={{ width:"100%", background:"#fff", border:"1px solid #fdba74", borderRadius:6, padding:"6px 8px", color:C.txt, fontSize:12, outline:"none", fontFamily:"inherit" }}/>
+                )}
+              </div>
+              <button type="button" onClick={() => onChange(prev => prev.filter(x => x.key !== p.key))} title="Retirer cette photo"
+                style={{ background:"none", border:"none", color:C.mut, cursor:"pointer", fontSize:18, padding:0, lineHeight:1 }}>×</button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Fenêtre d'envoi : progression, puis choix en cas d'échec partiel.
+function EnvoiPhotos({ envoi, echec }) {
+  if (!envoi && !echec) return null;
+  const pct = envoi && envoi.total ? Math.round(envoi.n / envoi.total * 100) : 0;
+  return (
+    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.78)", zIndex:70, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
+      <div style={{ background:C.card, borderRadius:16, padding:24, width:"100%", maxWidth:420, border:"1px solid " + C.bdr }}>
+        {echec ? (
+          <div>
+            <h3 style={{ color:"#b91c1c", fontSize:17, fontWeight:700, marginBottom:8 }}>⚠️ {echec.n} photo{echec.n > 1 ? "s" : ""} non envoyée{echec.n > 1 ? "s" : ""}</h3>
+            <p style={{ color:C.sub, fontSize:13, marginBottom:16 }}>{echec.msg}</p>
+            <div style={{ display:"flex", justifyContent:"flex-end", gap:10, flexWrap:"wrap" }}>
+              <Btn ghost onClick={() => echec.res(false)}>Continuer sans elles</Btn>
+              <Btn onClick={() => echec.res(true)}>↻ Réessayer</Btn>
+            </div>
+          </div>
+        ) : (
+          <div>
+            <h3 style={{ color:C.txt, fontSize:17, fontWeight:700, marginBottom:6 }}>📤 Envoi des photos sur le Drive</h3>
+            <p style={{ color:C.sub, fontSize:13, marginBottom:14 }}>{envoi.n} sur {envoi.total} — ne fermez pas l'application.</p>
+            <div style={{ background:"#e2e8f0", borderRadius:999, height:10, overflow:"hidden" }}>
+              <div style={{ width:pct + "%", background:"#16a34a", height:"100%", borderRadius:999, transition:"width .3s" }}/>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Envoi avec reprise : tant qu'il reste des échecs, l'utilisateur choisit de
+// réessayer ou de poursuivre. Renvoie les photos effectivement enregistrées.
+async function envoyerAvecReprise(order, liste, auteur, setEnvoi, setEchec, aLaReception) {
+  let reste = liste, faites = [];
+  while (reste.length) {
+    const r = await envoyerPhotos(order, reste, auteur, (n, total) => setEnvoi({ n, total }), aLaReception);
+    faites = faites.concat(r.faites);
+    setEnvoi(null);
+    if (!r.echecs.length) break;
+    const encore = await new Promise(res => setEchec({ n: r.echecs.length, msg: r.echecs[0].error, res }));
+    setEchec(null);
+    if (!encore) break;
+    reste = r.echecs.map(x => x.ph);
+  }
+  return faites;
+}
+
+// Onglet « État d'entrée » d'un ordre : galerie des photos déposées + ajout.
+function PhotosOrdre({ o, photos, recharger, user, notify }) {
+  const [nouvelles, setNouvelles] = useState([]);
+  const [envoi, setEnvoi] = useState(null), [echec, setEchec] = useState(null);
+  const [vue, setVue] = useState(null);
+  const isStaff = user.role !== "eleve";
+  if (photos === null) return <Crd><p style={{ color:C.mut, fontSize:13, margin:0 }}>Chargement des photos…</p></Crd>;
+  const tri = triPhotos(photos), dommages = tri.filter(p => p.damage);
+  const dossier = (tri.find(p => p.folderUrl) || {}).folderUrl;
+  const envoyer = async () => {
+    // une vue déjà déposée n'est jamais écrasée : la reprise s'ajoute à côté
+    const liste = nouvelles.map(ph => ({ ...ph, bis: ph.zone !== "dommage" && photos.some(x => x.zone === ph.zone) }));
+    const faites = await envoyerAvecReprise(o, liste, user.name, setEnvoi, setEchec);
+    if (faites.length) { notify(faites.length + " photo" + (faites.length > 1 ? "s" : "") + " ajoutée" + (faites.length > 1 ? "s" : "") + " à l'état d'entrée"); setNouvelles([]); }
+    recharger();
+  };
+  const majNote = async (p, patch) => {
+    try { await updateOrderPhoto(p.id, patch); recharger(); }
+    catch (e) { console.error(e); notify("Erreur : " + (e.message || e), "error"); }
+  };
+  const retirer = async (p) => {
+    if (!window.confirm("Retirer « " + p.label + " » de l'ordre ?\nL'original reste conservé sur le Drive.")) return;
+    try { await deleteOrderPhoto(p.id); recharger(); notify("Photo retirée de l'ordre"); }
+    catch (e) { console.error(e); notify("Erreur : " + (e.message || e), "error"); }
+  };
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+      <Crd>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, flexWrap:"wrap" }}>
+          <div>
+            <h3 style={{ color:"#2563eb", fontSize:15, fontWeight:700, margin:0 }}>📸 État du véhicule à l'entrée</h3>
+            <div style={{ color:C.sub, fontSize:12, marginTop:4 }}>
+              {tri.length === 0 ? "Aucune photo pour cet ordre."
+                : tri.length + " photo" + (tri.length > 1 ? "s" : "") + " · " +
+                  (dommages.length ? dommages.length + " dommage" + (dommages.length > 1 ? "s" : "") + " signalé" + (dommages.length > 1 ? "s" : "") : "aucun dommage signalé")}
+            </div>
+          </div>
+          {dossier && <a href={dossier} target="_blank" rel="noreferrer"
+            style={{ fontSize:13, fontWeight:600, color:"#059669", border:"1px solid #16a34a", borderRadius:8, padding:"7px 12px", textDecoration:"none" }}>📁 Dossier Drive</a>}
+        </div>
+        {tri.length > 0 && (
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))", gap:10, marginTop:12 }}>
+            {tri.map(p => (
+              <div key={p.id} style={{ borderRadius:10, overflow:"hidden", border:(p.damage ? "2px solid #f97316" : "1px solid " + C.bdr), background:"#f8fafc" }}>
+                <img src={p.thumb} alt={p.label} onClick={() => setVue(p)} style={{ width:"100%", aspectRatio:"4 / 3", objectFit:"cover", display:"block", cursor:"zoom-in" }}/>
+                <div style={{ padding:"6px 8px" }}>
+                  <div style={{ fontSize:12, fontWeight:600, color:C.txt }}>{p.label}</div>
+                  <div style={{ fontSize:11, color:C.mut }}>{fD(p.takenAt)} {hm(p.takenAt)}{p.createdBy ? " · " + p.createdBy : ""}</div>
+                  {p.damage && <div style={{ fontSize:11, color:"#c2410c", fontWeight:600, marginTop:2 }}>⚠ {p.note || "Dommage signalé"}</div>}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Crd>
+      <Crd>
+        <h4 style={{ margin:"0 0 4px", fontSize:14, fontWeight:700, color:C.txt }}>➕ Ajouter des photos</h4>
+        <p style={{ color:C.mut, fontSize:12, margin:"0 0 10px" }}>Une vue déjà déposée n'est jamais remplacée : la nouvelle prise s'ajoute à côté, avec son heure.</p>
+        <TourPhoto photos={nouvelles} onChange={setNouvelles} plate={o.plate} deja={photos.filter(p => p.zone !== "dommage").map(p => p.zone)}/>
+        {nouvelles.length > 0 && (
+          <div style={{ display:"flex", justifyContent:"flex-end", marginTop:12 }}>
+            <Btn onClick={envoyer}>📤 Envoyer {nouvelles.length} photo{nouvelles.length > 1 ? "s" : ""}</Btn>
+          </div>
+        )}
+      </Crd>
+      {vue && (
+        <div onClick={() => setVue(null)} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.88)", zIndex:65, display:"flex", alignItems:"center", justifyContent:"center", padding:12 }}>
+          <div onClick={e => e.stopPropagation()} style={{ background:C.card, borderRadius:14, overflow:"hidden", width:"100%", maxWidth:560, maxHeight:"94vh", overflowY:"auto" }}>
+            <img src={vue.thumb} alt={vue.label} style={{ width:"100%", display:"block" }}/>
+            <div style={{ padding:14 }}>
+              <div style={{ display:"flex", justifyContent:"space-between", gap:10, flexWrap:"wrap", alignItems:"baseline" }}>
+                <b style={{ fontSize:15, color:C.txt }}>{vue.label}</b>
+                <span style={{ fontSize:12, color:C.mut }}>{fD(vue.takenAt)} à {hm(vue.takenAt)}{vue.createdBy ? " · " + vue.createdBy : ""}</span>
+              </div>
+              {isStaff ? (
+                <div style={{ marginTop:10 }}>
+                  <label style={{ display:"flex", alignItems:"center", gap:6, fontSize:13, color: vue.damage ? "#c2410c" : C.sub, cursor:"pointer" }}>
+                    <input type="checkbox" checked={!!vue.damage} onChange={e => { const d = e.target.checked; setVue({ ...vue, damage: d }); majNote(vue, { damage: d }); }}/>
+                    ⚠ Dommage visible sur cette photo
+                  </label>
+                  <input defaultValue={vue.note} placeholder="Remarque (ex. rayure 10 cm, aile avant droite)"
+                    onBlur={e => { if (e.target.value !== vue.note) { setVue({ ...vue, note: e.target.value }); majNote(vue, { note: e.target.value }); } }}
+                    style={{ width:"100%", marginTop:8, background:"#f1f5f9", border:"1px solid " + C.bdr, borderRadius:6, padding:"8px 10px", color:C.txt, fontSize:13, outline:"none", fontFamily:"inherit" }}/>
+                </div>
+              ) : (vue.damage && <div style={{ fontSize:13, color:"#c2410c", fontWeight:600, marginTop:8 }}>⚠ {vue.note || "Dommage signalé"}</div>)}
+              <div style={{ display:"flex", justifyContent:"space-between", gap:10, flexWrap:"wrap", marginTop:14 }}>
+                {isStaff ? <Btn sm ghost danger onClick={() => { const p = vue; setVue(null); retirer(p); }}>🗑 Retirer de l'ordre</Btn> : <span/>}
+                <div style={{ display:"flex", gap:8 }}>
+                  {vue.driveUrl && <a href={vue.driveUrl} target="_blank" rel="noreferrer"
+                    style={{ fontSize:13, fontWeight:600, color:"#2563eb", border:"1px solid #3b82f6", borderRadius:8, padding:"6px 12px", textDecoration:"none" }}>Original (Drive) ↗</a>}
+                  <Btn sm onClick={() => setVue(null)}>Fermer</Btn>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      <EnvoiPhotos envoi={envoi} echec={echec}/>
+    </div>
+  );
+}
+
 // ── Envoi des documents au client par courriel (enseignants / administrateurs) ──
 // `mailables` : [{ key, label, name, html:()=>string, preselect }]
 function MailModal({ mailables, defaultTo, clientName, user, onClose, notify }) {
@@ -1456,7 +1942,7 @@ function MailModal({ mailables, defaultTo, clientName, user, onClose, notify }) 
     sbusy(true);
     try{
       await sendDocsByMail({ to:to.trim(), subject, body,
-        docs:chosen.map(m=>({ html:m.html(), name:m.name })) });
+        docs:await Promise.all(chosen.map(async m=>({ html:await m.html(), name:m.name }))) });
       notify("Courriel envoyé à "+to.trim()+" ("+chosen.length+" pièce"+(chosen.length>1?"s":"")+" jointe"+(chosen.length>1?"s":"")+")");
       onClose();
     }catch(e){ console.error("[DMS] envoi courriel",e); notify("Envoi impossible : "+(e.message||e),"error"); }
@@ -1496,8 +1982,18 @@ function MailModal({ mailables, defaultTo, clientName, user, onClose, notify }) 
   );
 }
 
-function OrderDetail({ orderId, orders, documents, editOrder, removeOrder, isAdmin, user, nav, notify, students }) {
+function OrderDetail({ orderId, orders, documents, editOrder, removeOrder, isAdmin, user, nav, notify, students, photosPret }) {
   const [mail,smail]=useState(false);
+  // Photos d'état d'entrée de cet ordre (null = en cours de chargement).
+  const [photosDe,setPhotosDe]=useState({ id:null, liste:[] });
+  const rechargerPhotos=useCallback(()=>{
+    if(photosPret!==true) return;
+    listOrderPhotos(orderId)
+      .then(liste=>setPhotosDe({ id:orderId, liste }))
+      .catch(e=>{ console.error("[DMS] photos",e); setPhotosDe({ id:orderId, liste:[] }); });
+  },[orderId,photosPret]);
+  useEffect(()=>{ rechargerPhotos(); },[rechargerPhotos]);
+  const photos=photosPret!==true?[]:(photosDe.id===orderId?photosDe.liste:null);
   const [tab,st]=useState("tasks"); const [showExit,sse]=useState(false); const [newTask,snt]=useState("");
   const o=orders.find(x=>x.id===orderId);
   const [obs,setObs]=useState(o?o.observations||"":""); const [adds,setAdds]=useState(o?o.additionalSales||"":"");
@@ -1514,7 +2010,8 @@ function OrderDetail({ orderId, orders, documents, editOrder, removeOrder, isAdm
   };
   const addT=()=>{if(!newTask.trim())return;upd({tasks:[...o.tasks,{id:gid(),label:newTask.trim(),done:false,doneBy:"",doneAt:"",est:"",amount:""}]});snt("");};
   const dn=o.tasks?o.tasks.filter(t=>t.done).length:0,tot=o.tasks?o.tasks.length:0,pct=tot?Math.round(dn/tot*100):0;
-  const TABS=[{id:"tasks",l:"☑️ Travaux"},...(o.ev?[{id:"ev",l:"⚡ Sécurité électrique"}]:[]),{id:"notes",l:"📝 Notes"},{id:"sig",l:"✍ Accord client"},...(o.exitDate?[{id:"exit",l:"🚪 Sortie"}]:[])];
+  const nbPhotos=(photos||[]).length;
+  const TABS=[{id:"tasks",l:"☑️ Travaux"},...(photosPret===true?[{id:"photos",l:"📸 État d'entrée"+(nbPhotos?" ("+nbPhotos+")":"")}]:[]),...(o.ev?[{id:"ev",l:"⚡ Sécurité électrique"}]:[]),{id:"notes",l:"📝 Notes"},{id:"sig",l:"✍ Accord client"},...(o.exitDate?[{id:"exit",l:"🚪 Sortie"}]:[])];
   const evSet=(id,patch)=>upd({ev:{...o.ev,steps:{...(o.ev.steps||{}),[id]:{...evStep(o.ev,id),...patch}}}});
   return (
     <div style={{maxWidth:900,margin:"0 auto"}}>
@@ -1528,11 +2025,12 @@ function OrderDetail({ orderId, orders, documents, editOrder, removeOrder, isAdm
             <span style={{fontSize:13,color:C.sub}}>{o.brand} {o.model} {o.year?"("+o.year+")":""}</span>
             {o.ev&&<span style={{fontSize:12,fontWeight:600,padding:"2px 8px",borderRadius:999,background:"#fef9c3",color:"#a16207"}}>⚡ VE/VH</span>}
             {o.signature&&<span style={{fontSize:12,color:"#059669"}}>✍ Signé</span>}
+            {nbPhotos>0&&<span onClick={()=>st("photos")} style={{fontSize:12,color:"#2563eb",cursor:"pointer",fontWeight:600}}>📸 {nbPhotos} photo{nbPhotos>1?"s":""}</span>}
           </div>
         </div>
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-          <Btn sm ghost onClick={()=>generatePDF(o)} style={{borderColor:"#3b82f6",color:"#2563eb"}}>📄 PDF</Btn>
-          {isStaff&&<Btn sm ghost onClick={()=>archiveToDrive(o,notify)} style={{borderColor:"#16a34a",color:"#059669"}}>📁 Archiver Drive</Btn>}
+          <Btn sm ghost onClick={()=>generatePDF(o,photos||[])} style={{borderColor:"#3b82f6",color:"#2563eb"}}>📄 PDF</Btn>
+          {isStaff&&<Btn sm ghost onClick={()=>archiveToDrive(o,notify,photos||[])} style={{borderColor:"#16a34a",color:"#059669"}}>📁 Archiver Drive</Btn>}
           {isStaff&&<Btn sm ghost onClick={()=>smail(true)} style={{borderColor:"#7c3aed",color:"#6d28d9"}}>✉️ Envoyer au client</Btn>}
           {isStaff&&o.status!=="termine"&&(
             <>
@@ -1624,6 +2122,9 @@ function OrderDetail({ orderId, orders, documents, editOrder, removeOrder, isAdm
           )}
         </div>
       )}
+      {tab==="photos"&&photosPret===true&&(
+        <PhotosOrdre o={o} photos={photos} recharger={rechargerPhotos} user={user} notify={notify}/>
+      )}
       {tab==="ev"&&o.ev&&(
         <div style={{display:"flex",flexDirection:"column",gap:12}}>
           <Crd>
@@ -1714,7 +2215,7 @@ function OrderDetail({ orderId, orders, documents, editOrder, removeOrder, isAdm
           ):(
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:10}}>
               <span style={{color:"#059669",fontSize:14,fontWeight:600}}>✅ Ordre terminé{o.exitDate?" le "+fD(o.exitDate):""}</span>
-              <Btn sm ghost onClick={()=>archiveToDrive(o,notify)} style={{borderColor:"#16a34a",color:"#059669"}}>📁 Archiver sur le Drive</Btn>
+              <Btn sm ghost onClick={()=>archiveToDrive(o,notify,photos||[])} style={{borderColor:"#16a34a",color:"#059669"}}>📁 Archiver sur le Drive</Btn>
             </div>
           )}
           {isAdmin&&(
@@ -1727,14 +2228,14 @@ function OrderDetail({ orderId, orders, documents, editOrder, removeOrder, isAdm
       {mail&&(()=>{
         const liés=(documents||[]).filter(d=>d.orderId===o.id||(plateKey(d.plate)&&plateKey(d.plate)===plateKey(o.plate)));
         const mailables=[
-          { key:"or", label:"Ordre de réparation "+o.orderNum, name:o.orderNum, html:()=>orderHTML(o) },
+          { key:"or", label:"Ordre de réparation "+o.orderNum+(nbPhotos?" (avec "+nbPhotos+" photo"+(nbPhotos>1?"s":"")+" d'état d'entrée)":""), name:o.orderNum, html:()=>orderHTML(o,photos||[]) },
           ...liés.map(d=>({ key:d.id, label:(d.kind==="estimate"?"Estimation ":"Facture ")+d.docNum+" · "+eur(docTotals(d).ttc),
                             name:d.docNum, html:()=>docHTML(d), preselect:false })),
         ];
         return <MailModal mailables={mailables} defaultTo={mailOf(o)} clientName={isPeda?o.teacher:o.clientName}
                  user={user} onClose={()=>smail(false)} notify={notify}/>;
       })()}
-      {showExit&&<ExitModal o={o} onOk={(d,archive)=>{upd({...d,status:"termine"});sse(false);st("exit");notify(archive?"Ordre terminé":"Ordre terminé (non archivé)");if(archive)archiveToDrive({...o,...d,status:"termine"},notify);}} onClose={()=>sse(false)}/>}
+      {showExit&&<ExitModal o={o} onOk={(d,archive)=>{upd({...d,status:"termine"});sse(false);st("exit");notify(archive?"Ordre terminé":"Ordre terminé (non archivé)");if(archive)archiveToDrive({...o,...d,status:"termine"},notify,photos||[]);}} onClose={()=>sse(false)}/>}
     </div>
   );
 }
@@ -2352,7 +2853,8 @@ function DocForm({ kind, initial, orders, documents, tariffs, clients, reloadCli
         const or=(orders||[]).find(o=>o.id===d.orderId);
         const mailables=[
           { key:"doc", label:label+" "+(d.docNum||"")+" · "+eur(docTotals(d).ttc), name:d.docNum||label, html:()=>docHTML(d) },
-          ...(or?[{ key:"or", label:"Ordre de réparation "+or.orderNum, name:or.orderNum, html:()=>orderHTML(or), preselect:false }]:[]),
+          ...(or?[{ key:"or", label:"Ordre de réparation "+or.orderNum, name:or.orderNum, preselect:false,
+                    html:async()=>orderHTML(or, await listOrderPhotos(or.id).catch(()=>[])) }]:[]),
         ];
         return <MailModal mailables={mailables} defaultTo={d.clientEmail||""} clientName={d.clientName}
                  user={user} onClose={()=>smail(false)} notify={notify}/>;
@@ -2564,6 +3066,7 @@ export default function DMSApp() {
   const { tariffs, reloadTariffs } = useTariffs(cu?.id);
   const { vehicleHistory, addVh, editVh, removeVh } = useVehicleHistory(cu?.id);
   const { clients, reloadClients } = useClients(cu?.id);
+  const photoIdx = usePhotoIndex(cu?.id);
   const { clientVehicles: cVehicles, reloadClientVehicles } = useClientVehicles(cu?.id);
   const [staff,setStaff]=useState([]);
   const [page,sp]=useState("dashboard");
@@ -2584,11 +3087,11 @@ export default function DMSApp() {
   const isStaff=cu.role!=="eleve"; const isAdmin=cu.role==="admin";
   const rs=ROLE_STYLE[cu.role]||{bg:"#e2e8f0",cl:C.sub};
   const renderPage=()=>{
-    if(page==="dashboard")    return<Dashboard orders={orders} nav={nav} selOrd={ssi}/>;
-    if(page==="orders")       return<OrdersList orders={orders} nav={nav} selOrd={ssi}/>;
+    if(page==="dashboard")    return<Dashboard orders={orders} nav={nav} selOrd={ssi} photoIdx={photoIdx.parOrdre}/>;
+    if(page==="orders")       return<OrdersList orders={orders} nav={nav} selOrd={ssi} photoIdx={photoIdx.parOrdre}/>;
     if(page==="vehicles")     return <VehiclesView orders={orders} documents={documents} vehicleHistory={vehicleHistory} clients={clients} cVehicles={cVehicles} user={cu} nav={nav} selOrd={ssi} openDoc={openDoc} addVh={addVh} editVh={editVh} removeVh={removeVh} notify={notify}/>;
-    if(page==="new-order")    return <NewOrderForm addOrder={addOrder} teachers={staff} students={students} clients={clients} reloadClients={reloadClients} cVehicles={cVehicles} reloadCVehicles={reloadClientVehicles} user={cu} nav={nav} selOrd={ssi} notify={notify}/>;
-    if(page==="order-detail") return selId?<OrderDetail orderId={selId} orders={orders} documents={documents} editOrder={editOrder} removeOrder={removeOrder} isAdmin={isAdmin} user={cu} nav={nav} notify={notify} students={students}/>:null;
+    if(page==="new-order")    return <NewOrderForm addOrder={addOrder} teachers={staff} students={students} clients={clients} reloadClients={reloadClients} cVehicles={cVehicles} reloadCVehicles={reloadClientVehicles} photosPret={photoIdx.pret} user={cu} nav={nav} selOrd={ssi} notify={notify}/>;
+    if(page==="order-detail") return selId?<OrderDetail orderId={selId} orders={orders} documents={documents} editOrder={editOrder} removeOrder={removeOrder} isAdmin={isAdmin} user={cu} nav={nav} notify={notify} students={students} photosPret={photoIdx.pret}/>:null;
     if(page==="estimates")    return <DocsList kind="estimate" documents={documents} openDoc={openDoc} newDoc={()=>newDoc("estimate")}/>;
     if(page==="invoices")     return <DocsList kind="invoice" documents={documents} openDoc={openDoc} newDoc={()=>newDoc("invoice")}/>;
     if(page==="doc-form")     return <DocForm kind={docKind} initial={selDoc?documents.find(d=>d.id===selDoc):null} orders={orders} documents={documents} tariffs={tariffs} clients={clients} reloadClients={reloadClients} addDocument={addDocument} editDocument={editDocument} removeDocument={removeDocument} isAdmin={isAdmin} user={cu} nav={nav} notify={notify}/>;

@@ -345,6 +345,62 @@ export const deleteAccount = (id) => callManageStudents({ action: "delete", id }
 export const resetPassword = (id, password) =>
   callManageStudents({ action: "reset_password", id, password });
 
+// ── Photos d'état d'entrée ──────────────────────────────────────────────────
+// Originaux sur le Drive ; la table ne garde qu'une miniature et le lien.
+export function rowToPhoto(r) {
+  return {
+    id: r.id, orderId: r.order_id, zone: r.zone || "", label: r.label || "",
+    damage: !!r.damage, note: r.note || "", thumb: r.thumb || "",
+    driveId: r.drive_id || "", driveUrl: r.drive_url || "", folderUrl: r.folder_url || "",
+    takenAt: r.taken_at || r.created_at, createdBy: r.created_by || "",
+    atIntake: !!r.at_intake,
+  };
+}
+function photoToRow(p) {
+  const row = {};
+  for (const k of ["orderId", "zone", "label", "damage", "note", "thumb", "driveId", "driveUrl", "folderUrl", "createdBy", "atIntake"])
+    if (k in p) row[camelToSnake(k)] = p[k];
+  if ("takenAt" in p) row.taken_at = p.takenAt || null;
+  return row;
+}
+export async function listOrderPhotos(orderId) {
+  const { data, error } = await supabase
+    .from("order_photos").select("*").eq("order_id", orderId).order("taken_at");
+  if (error) throw error;
+  return data.map(rowToPhoto);
+}
+// Index léger (sans les miniatures) : sert aux pastilles « 📸 n » des listes.
+// Échoue si la table n'existe pas encore → l'app masque alors la fonction.
+export async function listPhotoIndex() {
+  const { data, error } = await supabase.from("order_photos").select("order_id,damage");
+  if (error) throw error;
+  return data.map((r) => ({ orderId: r.order_id, damage: !!r.damage }));
+}
+export async function insertOrderPhoto(p) {
+  const { data, error } = await supabase.from("order_photos").insert(photoToRow(p)).select().single();
+  if (error) throw error;
+  return rowToPhoto(data);
+}
+export async function updateOrderPhoto(id, patch) {
+  const { data, error } = await supabase.from("order_photos").update(photoToRow(patch)).eq("id", id).select().single();
+  if (error) throw error;
+  return rowToPhoto(data);
+}
+export async function deleteOrderPhoto(id) {
+  const { error } = await supabase.from("order_photos").delete().eq("id", id);
+  if (error) throw error;
+}
+// Dépôt d'une photo sur le Drive. Le premier envoi donne `path`
+// ([client, véhicule, date]) et reçoit `folderId`, à repasser aux suivants.
+export async function uploadPhoto({ path, folderId, name, dataUrl }) {
+  const { data, error } = await supabase.functions.invoke("archive-order", {
+    body: { action: "photo", name, dataUrl, ...(folderId ? { folderId } : { path }) },
+  });
+  if (error) throw error;
+  if (!data?.ok) throw new Error(data?.error || "Envoi de la photo impossible");
+  return data;   // { id, url, name, folderId, folderUrl }
+}
+
 // ── Envoi par courriel des documents en PDF (même passerelle Apps Script) ────
 // docs : [{ html, name }] — chaque entrée devient une pièce jointe PDF.
 export async function sendDocsByMail({ to, subject, body, docs }) {

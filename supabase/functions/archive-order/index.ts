@@ -1,6 +1,9 @@
 // Edge Function : passerelle vers le script Google (Apps Script).
-//   action "archive" (défaut) : archive un document en PDF sur le Drive.
-//   action "mail"             : envoie un ou plusieurs documents en PDF par courriel.
+//   action "archive" (défaut) : archive un document en PDF sur le Drive.        (staff)
+//   action "mail"             : envoie un ou plusieurs documents en PDF.         (staff)
+//   action "photo"            : dépose une photo d'état d'entrée dans
+//                               <client>/<véhicule>/<date>/.          (tout utilisateur connecté :
+//                               un élève réceptionne aussi un véhicule)
 // Le frontend ne connaît jamais l'URL ni le secret du script Google : c'est cette
 // fonction (côté serveur) qui les détient et relaie l'envoi (ce qui règle aussi le CORS).
 //
@@ -34,14 +37,28 @@ Deno.serve(async (req) => {
     if (!user) return json({ ok: false, error: "Non authentifié" });
     const admin = createClient(url, serviceKey);
     const { data: prof } = await admin.from("profiles").select("role").eq("id", user.id).single();
-    if (!prof || !["admin", "enseignant"].includes(prof.role))
-      return json({ ok: false, error: "Réservé aux enseignants et aux administrateurs" });
+    if (!prof) return json({ ok: false, error: "Profil introuvable" });
+    const isStaff = ["admin", "enseignant"].includes(prof.role);
 
     const body = await req.json();
-    const action = body.action === "mail" ? "mail" : "archive";
+    const action = body.action === "mail" ? "mail" : body.action === "photo" ? "photo" : "archive";
+    if (action !== "photo" && !isStaff)
+      return json({ ok: false, error: "Réservé aux enseignants et aux administrateurs" });
 
     let payload: Record<string, unknown>;
-    if (action === "mail") {
+    if (action === "photo") {
+      const dataUrl = String(body.dataUrl ?? "");
+      if (!/^data:image\/(jpeg|png);base64,/.test(dataUrl)) return json({ ok: false, error: "Image invalide" });
+      if (dataUrl.length > 8_000_000) return json({ ok: false, error: "Image trop lourde (6 Mo au maximum)" });
+      const name = String(body.name ?? "").replace(/[^\w.\- àâäéèêëîïôöùûüçÀÂÄÉÈÊËÎÏÔÖÙÛÜÇ]+/g, "_").slice(0, 120);
+      if (!name) return json({ ok: false, error: "Nom de fichier manquant" });
+      const folderId = typeof body.folderId === "string" && /^[A-Za-z0-9_-]{10,100}$/.test(body.folderId) ? body.folderId : "";
+      const path = Array.isArray(body.path)
+        ? body.path.map((x: unknown) => String(x ?? "").trim().slice(0, 100)).filter(Boolean) : [];
+      // Arborescence imposée : <client> / <véhicule> / <date>
+      if (!folderId && path.length !== 3) return json({ ok: false, error: "Dossier de destination invalide" });
+      payload = { secret: scriptSecret, action: "photo", name, dataUrl, ...(folderId ? { folderId } : { path }) };
+    } else if (action === "mail") {
       const to = String(body.to ?? "").trim();
       const docs = Array.isArray(body.docs) ? body.docs : [];
       if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) return json({ ok: false, error: "Adresse électronique invalide" });
@@ -86,14 +103,25 @@ Deno.serve(async (req) => {
         : { ok: false, error: "Réponse inattendue du script : " + txt.slice(0, 200) };
     }
 
-    // Un script à jour confirme l'envoi par `mailed`. Sans ce marqueur, c'est
-    // l'ancienne version qui répond : le code est enregistré mais pas redéployé.
-    if (action === "mail" && res?.mailed !== true) {
-      const d = typeof res?.error === "string" ? " Réponse du script : « " + res.error + " »." : "";
+    // Un script à jour signe sa réponse (`photo`, `mailed`). Un script resté à
+    // l'ancienne version ignore l'action et bascule sur l'archivage : on le
+    // reconnaît à l'absence de marqueur ou à son message « html et orderNum requis ».
+    // Une vraie erreur du script (quota de courriels, dossier invalide…) est, elle,
+    // transmise telle quelle.
+    const perime = (marqueur: string) =>
+      (res?.ok === true && res?.[marqueur] !== true) || res?.error === "html et orderNum requis";
+    if (action === "photo" && perime("photo")) {
+      return json({
+        ok: false,
+        error: "Le script Google ne sait pas encore enregistrer les photos : il doit être mis à jour" +
+               " (docs/apps-script.gs) puis redéployé en « Nouvelle version ».",
+      });
+    }
+    if (action === "mail" && perime("mailed")) {
       return json({
         ok: false,
         error: "Le script Google n'a pas traité l'envoi — il est enregistré mais pas redéployé." +
-               " Dans Apps Script : Déployer → Gérer les déploiements → ✏️ → Version : Nouvelle version → Déployer." + d,
+               " Dans Apps Script : Déployer → Gérer les déploiements → ✏️ → Version : Nouvelle version → Déployer.",
       });
     }
     return json(res);

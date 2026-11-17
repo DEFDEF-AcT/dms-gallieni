@@ -475,10 +475,14 @@ function dossiersClients({ clients, cVehicles, orders, documents, history, remin
   return { liste, kmDe };
 }
 // ── Planning des rendez-vous ────────────────────────────────────────────────
-// L'atelier reçoit les véhicules clients le mercredi et le vendredi, 3 au plus par jour.
-const ATELIER_JOURS = [3, 5];        // 0 = dimanche … 3 = mercredi, 5 = vendredi
+// L'atelier reçoit les véhicules clients le mercredi, le jeudi et le vendredi,
+// 3 au plus par jour. Les textes de l'application suivent cette liste.
+const ATELIER_JOURS = [3, 4, 5];     // 0 = dimanche … 3 = mercredi, 4 = jeudi, 5 = vendredi
 const ATELIER_MAX = 3;
 const JOURS_FR = ["dimanche", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi"];
+// « mercredi, jeudi et vendredi » / « mercredi, jeudi ou vendredi »
+const ATELIER_JOURS_TXT = (lien) => { const l = ATELIER_JOURS.map(j => JOURS_FR[j]);
+  return l.length > 1 ? l.slice(0, -1).join(", ") + " " + lien + " " + l[l.length - 1] : l[0]; };
 const MOIS_FR = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
 const jourSem = (iso) => { const [y, m, d] = String(iso).slice(0, 10).split("-").map(Number); return new Date(Date.UTC(y, m - 1, d)).getUTCDay(); };
 const plusJours = (iso, n) => { const [y, m, d] = String(iso).slice(0, 10).split("-").map(Number); return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10); };
@@ -1742,7 +1746,7 @@ const chronoItems=(ors,docs,hist)=>[
   ...(docs||[]).map(d=>({t:d.kind,id:d.id,date:(d.createdAt||"").slice(0,10),d})),
   ...(hist||[]).map(h=>({t:"vh",id:h.id,date:h.date||(h.createdAt||"").slice(0,10),h})),
 ].sort((a,b)=>String(b.date).localeCompare(String(a.date)));
-const PlaqueChip=({p})=>p?<span style={{fontSize:11,fontWeight:700,padding:"2px 8px",borderRadius:6,background:"#f1f5f9",border:"1px solid "+C.bdr,color:C.txt,letterSpacing:.4,marginLeft:6}}>{plateFmt(p)}</span>:null;
+const PlaqueChip=({p})=>p?<span style={{fontSize:11,fontWeight:700,padding:"2px 8px",borderRadius:6,background:"#f1f5f9",border:"1px solid "+C.bdr,color:C.txt,letterSpacing:.4,marginLeft:6,whiteSpace:"nowrap",display:"inline-block"}}>{plateFmt(p)}</span>:null;
 // `plaques` : affiche l'immatriculation sur chaque ligne (client à plusieurs véhicules).
 // `onProgrammer(o)` : propose de programmer un rappel depuis les ventes additionnelles d'un OR.
 function Chronologie({ items, vide, isStaff, nav, selOrd, openDoc, onEditVh, onDelVh, plaques, onProgrammer }) {
@@ -2477,7 +2481,7 @@ function RdvModal({ init, clients, cVehicles, rdvs, presents, fermes, prochain, 
   const nouveauJour=!init?.id||init.day!==f.day;
   const autres=jours.filter(d=>d!==f.day&&libre(d)).slice(0,4);
   const enregistrer=async(force)=>{
-    if(!estJourAtelier(f.day)){alert("Les rendez-vous se prennent uniquement le mercredi ou le vendredi.");return;}
+    if(!estJourAtelier(f.day)){alert("Les rendez-vous se prennent uniquement le "+ATELIER_JOURS_TXT("ou")+".");return;}
     if(fermes.has(f.day)){alert("L'atelier est fermé ce jour-là"+(fermes.get(f.day)?" ("+fermes.get(f.day)+")":"")+". Choisissez un autre jour.");return;}
     if(!f.clientName.trim()){alert("Indiquez le nom du client.");return;}
     if(!force&&nouveauJour&&ch.n>=ATELIER_MAX){salerte(true);return;}
@@ -2491,7 +2495,7 @@ function RdvModal({ init, clients, cVehicles, rdvs, presents, fermes, prochain, 
       <h3 style={{color:C.txt,fontSize:18,fontWeight:700,marginBottom:10}}>{init?.id?"✏️ Modifier le rendez-vous":"📅 Nouveau rendez-vous"}</h3>
       <div style={{marginBottom:14}}><RappelPresents presents={presents} compact/></div>
       <div style={{marginBottom:8}}>
-        <Sel label="Jour d'atelier * (mercredi ou vendredi)" value={f.day} onChange={v=>set("day",v)} opts={jours.map(d=>({v:d,l:lbl(d)}))}/>
+        <Sel label={"Jour d'atelier * ("+ATELIER_JOURS_TXT("ou")+")"} value={f.day} onChange={v=>set("day",v)} opts={jours.map(d=>({v:d,l:lbl(d)}))}/>
       </div>
       {ch&&(
         <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap",fontSize:12,color:niv.col,fontWeight:600,marginBottom:12}}>
@@ -2682,7 +2686,7 @@ function PlanningView({ rdvs, fermetures, orders, clients, cVehicles, reloadClie
       </div>
       <div style={{marginBottom:10}}><RappelPresents presents={presents} ouvrir={ouvrirOr}/></div>
       <p style={{color:C.mut,fontSize:12,margin:"0 0 14px"}}>
-        Atelier ouvert aux véhicules clients le <b>mercredi</b> et le <b>vendredi</b>, {ATELIER_MAX} véhicules au maximum par jour.
+        Atelier ouvert aux véhicules clients le <b>{ATELIER_JOURS_TXT("et")}</b>, {ATELIER_MAX} véhicules au maximum par jour.
         Les véhicules encore à l'atelier (OR non terminé) occupent une place le prochain jour d'atelier.
       </p>
       <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginBottom:14}}>
@@ -2695,7 +2699,7 @@ function PlanningView({ rdvs, fermetures, orders, clients, cVehicles, reloadClie
         {semaines.map(l=>(
           <div key={l}>
             <div style={{fontSize:12,fontWeight:700,color:C.sub,textTransform:"uppercase",letterSpacing:.5,marginBottom:6}}>Semaine du {jourTxt(l)}</div>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:12}}>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(250px,1fr))",gap:12}}>
               {ATELIER_JOURS.map(j=>carteJour(plusJours(l,(j+6)%7)))}
             </div>
           </div>

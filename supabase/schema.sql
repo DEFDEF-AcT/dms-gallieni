@@ -525,7 +525,7 @@ alter publication supabase_realtime add table reminders;
 -- ============================================================================
 create table if not exists appointments (
   id           uuid primary key default gen_random_uuid(),
-  day          date not null,
+  day          date,                          -- null : client en liste d'attente
   time         text default '',
   client_id    uuid references clients(id) on delete set null,
   client_name  text not null default '',
@@ -536,11 +536,12 @@ create table if not exists appointments (
   model        text default '',
   reason       text default '',
   note         text default '',
-  status       text not null default 'prevu' check (status in ('prevu', 'arrive', 'annule')),
+  status       text not null default 'prevu' check (status in ('prevu', 'arrive', 'annule', 'attente')),
   order_id     uuid references orders(id) on delete set null,
   created_by   text default '',
   created_at   timestamptz default now(),
-  updated_at   timestamptz default now()
+  updated_at   timestamptz default now(),
+  constraint appointments_jour_check check (status = 'attente' or day is not null)
 );
 create index if not exists appointments_day_idx on appointments (day);
 drop trigger if exists trg_appointments_touch on appointments;

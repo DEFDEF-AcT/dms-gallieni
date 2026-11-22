@@ -315,6 +315,7 @@ export async function deleteReminder(id) {
 }
 
 // ── Planning des rendez-vous (lecture : tous ; écriture : enseignants / admin) ─
+// Statuts : prevu, arrive, annule, attente (liste d'attente, sans jour).
 export function rowToRdv(r) {
   return {
     id: r.id, day: r.day || "", time: r.time || "", clientId: r.client_id || null,
@@ -325,8 +326,9 @@ export function rowToRdv(r) {
 }
 function rdvToRow(x) {
   const row = {};
-  for (const k of ["day", "time", "clientName", "clientPhone", "clientEmail", "plate", "brand", "model", "reason", "note", "status", "createdBy"])
+  for (const k of ["time", "clientName", "clientPhone", "clientEmail", "plate", "brand", "model", "reason", "note", "status", "createdBy"])
     if (k in x) row[camelToSnake(k)] = String(x[k] ?? "").trim();
+  if ("day" in x) row.day = x.day || null;              // null : client en liste d'attente
   if ("clientId" in x) row.client_id = x.clientId || null;
   if ("orderId" in x) row.order_id = x.orderId || null;
   return row;

@@ -3604,7 +3604,7 @@ function AdminPanel({ students, staff, orders, tariffs, reloadTariffs, clients, 
     catch(e){ console.error(e); notify("Erreur : "+(e.message||e),"error"); }
   };
   const resetStaff=async(s)=>{
-    const np=window.prompt("Nouveau mot de passe pour "+s.name+" :");
+    const np=window.prompt("Nouveau mot de passe pour "+s.name+(s.identifier?" (identifiant : "+s.identifier+")":"")+" :\n6 caractères minimum. Communiquez-le-lui ; il pourra le changer dans « Mon compte ».");
     if(np==null)return; if(np.length<6){notify("Mot de passe : 6 caractères minimum","error");return;}
     try{ await resetPassword(s.id,np); notify("Mot de passe réinitialisé"); }
     catch(e){ console.error(e); notify("Erreur : "+(e.message||e),"error"); }
@@ -3736,7 +3736,12 @@ function AdminPanel({ students, staff, orders, tariffs, reloadTariffs, clients, 
               <p style={{color:C.sub,fontSize:13,margin:0}}>La gestion des comptes du personnel est réservée à l'administrateur.</p>
             </Crd>
           )}
-          {staff.map(s=>{const rs=ROLE_STYLE[s.role]||{bg:"#e2e8f0",cl:C.sub};const protege=s.role==="admin"||s.id===currentId;return(
+          {staff.map(s=>{const rs=ROLE_STYLE[s.role]||{bg:"#e2e8f0",cl:C.sub};
+            // Un administrateur ne se supprime pas ; son mot de passe peut être réinitialisé
+            // par un autre administrateur (les comptes du personnel n'ont pas de vraie
+            // adresse électronique : « mot de passe oublié » ne peut pas les secourir).
+            // Pour son propre compte : « Mon compte ».
+            const soi=s.id===currentId, protege=s.role==="admin"||soi;return(
             <Crd key={s.id}>
               <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
                 <div style={{flex:1}}>
@@ -3744,10 +3749,10 @@ function AdminPanel({ students, staff, orders, tariffs, reloadTariffs, clients, 
                   {s.identifier&&<div style={{color:C.mut,fontSize:12,marginTop:2}}>🔑 {s.identifier}</div>}
                 </div>
                 <span style={{fontSize:11,padding:"2px 8px",borderRadius:999,fontWeight:600,background:rs.bg,color:rs.cl}}>{roleLabel(s.role)}</span>
-                {isAdmin&&!protege&&(
+                {isAdmin&&!soi&&(
                   <div style={{display:"flex",gap:6}}>
                     <Btn sm ghost onClick={()=>resetStaff(s)}>Réinit. mdp</Btn>
-                    <Btn sm danger onClick={()=>delStaff(s)}>Supprimer</Btn>
+                    {!protege&&<Btn sm danger onClick={()=>delStaff(s)}>Supprimer</Btn>}
                   </div>
                 )}
               </div>

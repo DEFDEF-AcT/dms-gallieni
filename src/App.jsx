@@ -475,14 +475,17 @@ function dossiersClients({ clients, cVehicles, orders, documents, history, remin
   return { liste, kmDe };
 }
 // ── Planning des rendez-vous ────────────────────────────────────────────────
-// L'atelier reçoit les véhicules clients le mercredi, le jeudi et le vendredi,
-// 3 au plus par jour. Les textes de l'application suivent cette liste.
-const ATELIER_JOURS = [3, 4, 5];     // 0 = dimanche … 3 = mercredi, 4 = jeudi, 5 = vendredi
+// L'atelier reçoit les véhicules clients du lundi au vendredi, 3 au plus par jour.
+// Les textes et l'affichage du planning suivent cette liste.
+const ATELIER_JOURS = [1, 2, 3, 4, 5];   // 0 = dimanche, 1 = lundi … 5 = vendredi
 const ATELIER_MAX = 3;
 const JOURS_FR = ["dimanche", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi"];
-// « mercredi, jeudi et vendredi » / « mercredi, jeudi ou vendredi »
-const ATELIER_JOURS_TXT = (lien) => { const l = ATELIER_JOURS.map(j => JOURS_FR[j]);
-  return l.length > 1 ? l.slice(0, -1).join(", ") + " " + lien + " " + l[l.length - 1] : l[0]; };
+// « du lundi au vendredi » (jours qui se suivent) ou « le mercredi, jeudi et vendredi ».
+const ATELIER_JOURS_TXT = (lien) => {
+  const j = [...ATELIER_JOURS].sort((a, b) => a - b), l = j.map(x => JOURS_FR[x]);
+  if (j.length >= 3 && j.every((x, i) => i === 0 || x === j[i - 1] + 1)) return "du " + l[0] + " au " + l[l.length - 1];
+  return "le " + (l.length > 1 ? l.slice(0, -1).join(", ") + " " + lien + " " + l[l.length - 1] : l[0]);
+};
 const MOIS_FR = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
 const jourSem = (iso) => { const [y, m, d] = String(iso).slice(0, 10).split("-").map(Number); return new Date(Date.UTC(y, m - 1, d)).getUTCDay(); };
 const plusJours = (iso, n) => { const [y, m, d] = String(iso).slice(0, 10).split("-").map(Number); return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10); };
@@ -678,6 +681,16 @@ function useSession() {
   return { user, ready, recovery, clearRecovery: () => setRecovery(false) };
 }
 
+// Largeur de la fenêtre, suivie au redimensionnement.
+function useLargeur() {
+  const [l, sl] = useState(window.innerWidth);
+  useEffect(() => {
+    const f = () => sl(window.innerWidth);
+    window.addEventListener("resize", f);
+    return () => window.removeEventListener("resize", f);
+  }, []);
+  return l;
+}
 function useDesktop() {
   const [d, sd] = useState(window.innerWidth >= 1024);
   useEffect(() => {
@@ -2478,7 +2491,7 @@ const JoursLibres=({jours,charge,onJour})=>jours.length>0&&(
 // `attente` : le client est inscrit en liste d'attente, sans jour.
 function RdvModal({ init, attente, clients, cVehicles, rdvs, presents, fermes, prochain, onSave, onDelete, onClose }) {
   const ref=aujourdhui();
-  const jours=joursAtelier(ref,40);
+  const jours=joursAtelier(ref,12*ATELIER_JOURS.length);       // environ 12 semaines
   if(init?.day&&!jours.includes(init.day)) jours.unshift(init.day);
   const charge=(d)=>chargeJour(d,{rdvs,presents,prochain,sauf:init?.id});
   const libre=(d)=>!fermes.has(d)&&d>=ref&&charge(d).n<ATELIER_MAX;
@@ -2512,7 +2525,7 @@ function RdvModal({ init, attente, clients, cVehicles, rdvs, presents, fermes, p
     const att=versAttente||modeAttente;
     if(!f.clientName.trim()){alert("Indiquez le nom du client.");return;}
     if(!att){
-      if(!estJourAtelier(f.day)){alert("Les rendez-vous se prennent uniquement le "+ATELIER_JOURS_TXT("ou")+".");return;}
+      if(!estJourAtelier(f.day)){alert("Les rendez-vous se prennent uniquement "+ATELIER_JOURS_TXT("ou")+".");return;}
       if(fermes.has(f.day)){alert("L'atelier est fermé ce jour-là"+(fermes.get(f.day)?" ("+fermes.get(f.day)+")":"")+". Choisissez un autre jour.");return;}
       if(!force&&nouveauJour&&ch.n>=ATELIER_MAX){salerte(true);return;}
     }
@@ -2589,6 +2602,12 @@ function RdvModal({ init, attente, clients, cVehicles, rdvs, presents, fermes, p
   );
 }
 
+// Petit bouton à icône (la bulle d'aide dit ce qu'il fait).
+const Ico=({titre,onClick,danger,children})=>(
+  <button type="button" title={titre} aria-label={titre} onClick={onClick}
+    style={{width:28,height:26,display:"inline-flex",alignItems:"center",justifyContent:"center",borderRadius:6,cursor:"pointer",fontSize:13,padding:0,
+      border:"1px solid "+(danger?"#fca5a5":C.bdr),background:"#fff",color:danger?"#dc2626":C.sub,fontFamily:"inherit"}}>{children}</button>);
+
 const RDV_STATUT = {
   prevu:   { l:"Prévu",      col:"#1d4ed8", bg:"#dbeafe" },
   arrive:  { l:"Arrivé",     col:"#15803d", bg:"#dcfce7" },
@@ -2598,7 +2617,9 @@ const RDV_STATUT = {
 
 function PlanningView({ rdvs, fermetures, orders, clients, cVehicles, reloadClients, reloadCVehicles, ops, user, nav, selOrd, accueillir, notify, prefill }) {
   const isStaff=user.role!=="eleve";
-  const desktop=useDesktop();
+  const largeur=useLargeur();
+  const cote=largeur>=1400;                          // liste d'attente à côté du planning
+  const semaineEnLigne=largeur>=1024;                // les jours d'une semaine sur une ligne
   const ref=aujourdhui();
   const fermes=new Map((fermetures||[]).map(x=>[x.day,x.reason]));
   const presents=vehiculesPresents(orders);
@@ -2692,6 +2713,10 @@ function PlanningView({ rdvs, fermetures, orders, clients, cVehicles, reloadClie
   }:{};
   const poignee=<span title="Glisser pour déplacer" style={{color:C.mut,cursor:"grab",fontSize:14,lineHeight:1,userSelect:"none"}}>⠿</span>;
 
+  const plaque=(p)=>p?<span style={{display:"inline-block",fontSize:10,fontWeight:700,padding:"1px 6px",borderRadius:5,background:"#f1f5f9",border:"1px solid "+C.bdr,
+    color:C.txt,letterSpacing:.3,whiteSpace:"nowrap",marginTop:2}}>{plateFmt(p)}</span>:null;
+  const uneLigne={overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"};
+
   const carteJour=(d)=>{
     const passe=d<ref, ferme=fermes.has(d), c=chargeJour(d,{rdvs,presents,prochain}), niv=chargeNiv(c.n);
     const liste=rdvs.filter(r=>r.day===d).sort((a,b)=>(a.status==="annule")-(b.status==="annule")||String(a.time).localeCompare(String(b.time)));
@@ -2699,72 +2724,75 @@ function PlanningView({ rdvs, fermetures, orders, clients, cVehicles, reloadClie
     const accepte=!!selR&&!ferme&&!passe&&!(selR.day===d&&selR.status!=="attente");
     const plein=accepte&&chargeJour(d,{rdvs,presents,prochain,sauf:selR.id}).n>=ATELIER_MAX;
     const dessus=survol===d&&accepte;
+    const [,mm,jj]=d.split("-").map(Number);
     return (
-      <div key={d} {...zone(d,accepte)} style={{background:dessus?(plein?"#fff7ed":"#eff6ff"):ferme?"#f8fafc":C.card,borderRadius:12,border:"1px solid "+(d===ref?C.acc:C.bdr),
-        borderTop:"5px solid "+(ferme?"#94a3b8":passe?"#cbd5e1":niv.col),padding:12,opacity:sel&&!accepte?.45:passe?.75:1,display:"flex",flexDirection:"column",gap:8,
+      <div key={d} data-jour={d} {...zone(d,accepte)} style={{background:dessus?(plein?"#fff7ed":"#eff6ff"):ferme?"#f8fafc":C.card,borderRadius:10,
+        borderStyle:"solid",borderWidth:"5px 1px 1px 1px",borderColor:[ferme?"#94a3b8":passe?"#cbd5e1":niv.col].concat([1,2,3].map(()=>d===ref?C.acc:C.bdr)).join(" "),padding:8,minWidth:0,opacity:sel&&!accepte?.45:passe?.75:1,display:"flex",flexDirection:"column",gap:6,
         outline:accepte?(dessus?"3px solid ":"2px dashed ")+(plein?"#f97316":"#3b82f6"):"none",outlineOffset:2,transition:"background .12s, opacity .12s"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8,flexWrap:"wrap"}}>
-          <div>
-            <div style={{fontSize:15,fontWeight:700,color:C.txt}}>{maj1(jourTxt(d))}</div>
-            {d===ref&&<span style={{fontSize:11,fontWeight:700,color:C.acc}}>Aujourd'hui</span>}
-            {d===prochain&&d!==ref&&<span style={{fontSize:11,fontWeight:700,color:C.acc}}>Prochain jour d'atelier</span>}
+        <div>
+          <div style={{fontSize:11,fontWeight:700,letterSpacing:.4,textTransform:"uppercase",color:d===ref?C.acc:C.sub}}>{JOURS_FR[jourSem(d)]}{d===ref?" · aujourd'hui":""}</div>
+          <div style={{fontSize:15,fontWeight:700,color:C.txt,...uneLigne}}>{jj}{jj===1?"er":""} {MOIS_FR[mm-1]}</div>
+          {d===prochain&&d!==ref&&<div style={{fontSize:10,fontWeight:700,color:C.acc}}>Prochain jour d'atelier</div>}
+          <div style={{marginTop:4}}>
+            {ferme
+              ? <span style={{fontSize:11,fontWeight:700,color:"#475569"}}>🚫 Fermé</span>
+              : passe ? <span style={{fontSize:11,fontWeight:600,color:C.mut}}>Passé</span>
+              : <span style={{display:"inline-flex",alignItems:"center",gap:6,flexWrap:"wrap"}}><Jauge n={c.n}/>
+                  <span style={{fontSize:11,fontWeight:700,color:niv.col}}>{c.n}/{ATELIER_MAX}{c.n>=ATELIER_MAX?(c.n>ATELIER_MAX?" dépassé":" complet"):""}</span></span>}
           </div>
-          {ferme
-            ? <span style={{fontSize:12,fontWeight:700,color:"#475569"}}>🚫 Fermé</span>
-            : passe ? <span style={{fontSize:11,fontWeight:600,color:C.mut}}>Passé</span>
-            : <div style={{textAlign:"right"}}><Jauge n={c.n}/><div style={{fontSize:11,fontWeight:700,color:niv.col,marginTop:3}}>
-                {c.n}/{ATELIER_MAX}{c.n>=ATELIER_MAX?(c.n>ATELIER_MAX?" · dépassé":" · complet"):" · "+(ATELIER_MAX-c.n)+" place"+(ATELIER_MAX-c.n>1?"s":"")}</div></div>}
         </div>
         {accepte&&(
           sel.mode==="tap"
-            ? <Btn sm danger={plein} onClick={()=>deplacer(selR,d)}>{plein?"⚠️ Placer ici (complet)":"📥 Placer ici"}</Btn>
-            : <div style={{fontSize:12,fontWeight:700,textAlign:"center",color:plein?"#c2410c":"#1d4ed8"}}>{plein?"⚠️ Complet — avertissement au dépôt":"📥 Déposer ici"}</div>
+            ? <Btn sm full danger={plein} onClick={()=>deplacer(selR,d)}>{plein?"⚠️ Placer ici":"📥 Placer ici"}</Btn>
+            : <div style={{fontSize:11,fontWeight:700,textAlign:"center",color:plein?"#c2410c":"#1d4ed8"}}>{plein?"⚠️ Complet":"📥 Déposer ici"}</div>
         )}
-        {ferme&&<div style={{fontSize:12,color:"#475569"}}>Atelier fermé{fermes.get(d)?" — "+fermes.get(d):""}</div>}
+        {ferme&&fermes.get(d)&&<div style={{fontSize:11,color:"#475569"}}>{fermes.get(d)}</div>}
         {c.enPlace.map(o=>(
-          <div key={"p"+o.id} onClick={()=>ouvrirOr(o)} style={{cursor:"pointer",padding:"7px 10px",borderRadius:8,background:"#f8fafc",border:"1px dashed "+C.bdr,fontSize:12,color:C.sub}}>
-            🔧 <b>Déjà à l'atelier</b> · {o.orderNum} <PlaqueChip p={o.plate}/> {o.clientName&&<span>· {o.clientName}</span>}
+          <div key={"p"+o.id} onClick={()=>ouvrirOr(o)} title={"Encore à l'atelier : "+o.orderNum} style={{cursor:"pointer",padding:"5px 7px",borderRadius:7,background:"#f8fafc",border:"1px dashed "+C.bdr,fontSize:11,color:C.sub,minWidth:0}}>
+            🔧 <b>Déjà à l'atelier</b>
+            <div style={uneLigne}>{o.orderNum}{o.clientName?" · "+o.clientName:""}</div>
+            {plaque(o.plate)}
           </div>
         ))}
         {liste.map(r=>{ const st=RDV_STATUT[r.status]||RDV_STATUT.prevu, o=r.orderId&&orders.find(x=>x.id===r.orderId); return (
-          <div key={r.id} {...glisser(r)} style={{padding:"8px 10px",borderRadius:8,border:"1px solid "+(sel?.id===r.id?C.acc:C.bdr),background:r.status==="annule"?"#f8fafc":"#fff",
-            opacity:r.status==="annule"?.65:sel?.id===r.id?.5:1,cursor:mobile(r)?"grab":"default"}}>
-            <div style={{display:"flex",justifyContent:"space-between",gap:8,alignItems:"flex-start"}}>
-              <div style={{display:"flex",gap:6,minWidth:0}}>
-                {mobile(r)&&poignee}
-                <div style={{minWidth:0,fontSize:13,color:C.txt,textDecoration:r.status==="annule"?"line-through":"none"}}>
-                  <b>{r.time?r.time.replace(":","h"):"—"}</b> · <b>{r.clientName}</b>{r.plate&&<PlaqueChip p={r.plate}/>}
-                  {(r.brand||r.model)&&<div style={{fontSize:12,color:C.sub}}>{[r.brand,r.model].filter(Boolean).join(" ")}</div>}
-                  {r.reason&&<div style={{fontSize:12,color:C.sub,whiteSpace:"pre-wrap"}}>📝 {r.reason}</div>}
-                  {isStaff&&r.note&&<div style={{fontSize:11,color:C.mut}}>🔒 {r.note}</div>}
-                  {r.clientPhone&&<a href={"tel:"+r.clientPhone.replace(/\s/g,"")} style={{fontSize:12,color:"#1d4ed8",textDecoration:"none"}}>📞 {r.clientPhone}</a>}
-                </div>
-              </div>
-              <span style={{fontSize:11,fontWeight:700,padding:"2px 8px",borderRadius:999,background:st.bg,color:st.col,whiteSpace:"nowrap"}}>{st.l}</span>
+          <div key={r.id} {...glisser(r)} style={{padding:"6px 7px",borderRadius:7,borderStyle:"solid",borderWidth:"1px 1px 1px 4px",
+            borderColor:[1,2,3].map(()=>sel?.id===r.id?C.acc:C.bdr).concat(st.col).join(" "),
+            background:r.status==="annule"?"#f8fafc":"#fff",opacity:r.status==="annule"?.65:sel?.id===r.id?.5:1,cursor:mobile(r)?"grab":"default",minWidth:0}}>
+            <div style={{display:"flex",justifyContent:"space-between",gap:4,alignItems:"center"}}>
+              <span style={{fontSize:12,fontWeight:700,color:C.txt,display:"inline-flex",gap:4,alignItems:"center"}}>{mobile(r)&&poignee}{r.time?r.time.replace(":","h"):"—"}</span>
+              {r.status!=="prevu"&&<span style={{fontSize:10,fontWeight:700,color:st.col}}>{st.l}</span>}
             </div>
+            <div title={r.clientName} style={{fontSize:13,fontWeight:700,color:C.txt,textDecoration:r.status==="annule"?"line-through":"none",...uneLigne}}>{r.clientName}</div>
+            {plaque(r.plate)}
+            {(r.brand||r.model)&&<div style={{fontSize:11,color:C.sub,...uneLigne}}>{[r.brand,r.model].filter(Boolean).join(" ")}</div>}
+            {r.reason&&<div title={r.reason} style={{fontSize:11,color:C.sub,...uneLigne}}>📝 {r.reason}</div>}
+            {isStaff&&r.note&&<div title={r.note} style={{fontSize:10,color:C.mut,...uneLigne}}>🔒 {r.note}</div>}
+            {r.clientPhone&&<a href={"tel:"+r.clientPhone.replace(/\s/g,"")} style={{fontSize:11,color:"#1d4ed8",textDecoration:"none",display:"block",...uneLigne}}>📞 {r.clientPhone}</a>}
             {(isStaff||o)&&(
-              <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:8}}>
+              <div style={{display:"flex",gap:4,flexWrap:"wrap",marginTop:6}}>
                 {o&&<Btn sm ghost onClick={()=>ouvrirOr(o)}>🔧 {o.orderNum}</Btn>}
                 {isStaff&&r.status==="prevu"&&<>
-                  <Btn sm onClick={()=>accueillir(r)}>🔧 Accueillir</Btn>
-                  <Btn sm ghost onClick={()=>ssel(s=>s?.id===r.id?null:{id:r.id,mode:"tap"})}>↔ Déplacer</Btn>
-                  <Btn sm ghost onClick={()=>smodal({init:r})}>✏️</Btn>
-                  <Btn sm ghost onClick={()=>annuler(r)}>✕</Btn>
+                  <Btn sm onClick={()=>accueillir(r)} style={{padding:"4px 8px"}}>🔧 Accueillir</Btn>
+                  <Ico titre="Déplacer (ou glisser-déposer sur un autre jour)" onClick={()=>ssel(s=>s?.id===r.id?null:{id:r.id,mode:"tap"})}>↔</Ico>
+                  <Ico titre="Modifier le rendez-vous" onClick={()=>smodal({init:r})}>✏️</Ico>
+                  <Ico titre="Annuler le rendez-vous" onClick={()=>annuler(r)}>✕</Ico>
                 </>}
                 {isStaff&&r.status==="annule"&&<>
-                  <Btn sm ghost onClick={()=>retablir(r)}>↺ Rétablir</Btn>
-                  <Btn sm ghost danger onClick={()=>supprimer(r)}>🗑</Btn>
+                  <Ico titre="Rétablir le rendez-vous" onClick={()=>retablir(r)}>↺</Ico>
+                  <Ico titre="Supprimer le rendez-vous" danger onClick={()=>supprimer(r)}>🗑</Ico>
                 </>}
               </div>
             )}
           </div>); })}
-        {!ferme&&liste.length===0&&c.enPlace.length===0&&<div style={{fontSize:12,color:C.mut}}>Aucun rendez-vous.</div>}
+        {!ferme&&liste.length===0&&c.enPlace.length===0&&!accepte&&<div style={{fontSize:11,color:C.mut}}>Aucun rendez-vous.</div>}
         {isStaff&&!passe&&!sel&&(
-          <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:"auto",paddingTop:4}}>
-            {!ferme&&<Btn sm ghost={c.n>=ATELIER_MAX} onClick={()=>smodal({init:{day:d}})}>{c.n>=ATELIER_MAX?"⚠️ Réserver (complet)":"+ Réserver"}</Btn>}
+          <div style={{display:"flex",gap:4,marginTop:"auto",paddingTop:2}}>
             {ferme
-              ? <Btn sm ghost onClick={()=>rouvrir(d)}>↺ Rouvrir l'atelier</Btn>
-              : <Btn sm ghost onClick={()=>fermer(d)}>🚫 Fermer ce jour</Btn>}
+              ? <Btn sm ghost onClick={()=>rouvrir(d)} style={{flex:1}}>↺ Rouvrir</Btn>
+              : <>
+                  <Btn sm ghost={c.n>=ATELIER_MAX} onClick={()=>smodal({init:{day:d}})} style={{flex:1,padding:"5px 6px"}}>{c.n>=ATELIER_MAX?"⚠️ Réserver":"+ Réserver"}</Btn>
+                  <Ico titre="Fermer l'atelier ce jour (vacances, examen…)" onClick={()=>fermer(d)}>🚫</Ico>
+                </>}
           </div>
         )}
       </div>
@@ -2786,7 +2814,7 @@ function PlanningView({ rdvs, fermetures, orders, clients, cVehicles, reloadClie
       {accepteAttente&&(sel.mode==="tap"
         ? <div style={{marginBottom:8}}><Btn sm full onClick={()=>versAttente(selR)}>⏳ Mettre en attente ici</Btn></div>
         : <div style={{fontSize:12,fontWeight:700,textAlign:"center",color:"#b45309",marginBottom:8}}>📥 Déposer ici pour mettre en attente</div>)}
-      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+      <div style={cote?{display:"flex",flexDirection:"column",gap:8}:{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(230px,1fr))",gap:8}}>
         {enAttente.map(r=>(
           <div key={r.id} {...glisser(r)} style={{padding:"8px 10px",borderRadius:8,background:"#fff",border:"1px solid "+(sel?.id===r.id?C.acc:"#fde68a"),
             opacity:sel?.id===r.id?.5:1,cursor:mobile(r)?"grab":"default"}}>
@@ -2815,9 +2843,9 @@ function PlanningView({ rdvs, fermetures, orders, clients, cVehicles, reloadClie
     </div>
   );
 
-  const libresPour=(r,day)=>joursAtelier(ref,40).filter(d=>d!==day&&!fermes.has(d)&&chargeJour(d,{rdvs,presents,prochain,sauf:r.id}).n<ATELIER_MAX).slice(0,4);
+  const libresPour=(r,day)=>joursAtelier(ref,12*ATELIER_JOURS.length).filter(d=>d!==day&&!fermes.has(d)&&chargeJour(d,{rdvs,presents,prochain,sauf:r.id}).n<ATELIER_MAX).slice(0,4);
   return (
-    <div style={{maxWidth:1320,margin:"0 auto"}}>
+    <div style={{maxWidth:1500,margin:"0 auto"}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:12}}>
         <h2 style={{color:C.txt,fontSize:20,fontWeight:700,margin:0}}>📅 Planning des rendez-vous</h2>
         {isStaff&&<div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
@@ -2827,7 +2855,7 @@ function PlanningView({ rdvs, fermetures, orders, clients, cVehicles, reloadClie
       </div>
       <div style={{marginBottom:10}}><RappelPresents presents={presents} ouvrir={ouvrirOr}/></div>
       <p style={{color:C.mut,fontSize:12,margin:"0 0 14px"}}>
-        Atelier ouvert aux véhicules clients le <b>{ATELIER_JOURS_TXT("et")}</b>, {ATELIER_MAX} véhicules au maximum par jour.
+        Atelier ouvert aux véhicules clients <b>{ATELIER_JOURS_TXT("et")}</b>, {ATELIER_MAX} véhicules au maximum par jour.
         Les véhicules encore à l'atelier (OR non terminé) occupent une place le prochain jour d'atelier.
         {isStaff&&<> Pour déplacer un rendez-vous, <b>glissez-le</b> sur un autre jour (ou « ↔ Déplacer » sur tablette).</>}
       </p>
@@ -2838,8 +2866,8 @@ function PlanningView({ rdvs, fermetures, orders, clients, cVehicles, reloadClie
           <Btn sm ghost onClick={finDeplacement} style={{background:"#fff",color:"#1d4ed8"}}>Annuler</Btn>
         </div>
       )}
-      <div style={desktop?{display:"grid",gridTemplateColumns:"minmax(0,1fr) 300px",gap:16,alignItems:"start"}:{display:"flex",flexDirection:"column",gap:16}}>
-        {!desktop&&listeAttente}
+      <div style={cote?{display:"grid",gridTemplateColumns:"minmax(0,1fr) 280px",gap:16,alignItems:"start"}:{display:"flex",flexDirection:"column",gap:16}}>
+        {!cote&&listeAttente}
         <div>
           <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginBottom:14}}>
             <Btn sm ghost onClick={()=>spage(p=>p-1)}>← 4 semaines</Btn>
@@ -2851,14 +2879,14 @@ function PlanningView({ rdvs, fermetures, orders, clients, cVehicles, reloadClie
             {semaines.map(l=>(
               <div key={l}>
                 <div style={{fontSize:12,fontWeight:700,color:C.sub,textTransform:"uppercase",letterSpacing:.5,marginBottom:6}}>Semaine du {jourTxt(l)}</div>
-                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))",gap:12}}>
+                <div style={{display:"grid",gap:8,gridTemplateColumns:semaineEnLigne?"repeat("+ATELIER_JOURS.length+",minmax(0,1fr))":"repeat(auto-fill,minmax(200px,1fr))"}}>
                   {ATELIER_JOURS.map(j=>carteJour(plusJours(l,(j+6)%7)))}
                 </div>
               </div>
             ))}
           </div>
         </div>
-        {desktop&&<div style={{position:"sticky",top:72}}>{listeAttente}</div>}
+        {cote&&<div style={{position:"sticky",top:72}}>{listeAttente}</div>}
       </div>
       {modal&&<RdvModal init={modal.init} attente={modal.attente} clients={clients} cVehicles={cVehicles} rdvs={rdvs} presents={presents} fermes={fermes} prochain={prochain}
         onSave={sauver} onDelete={modal.init?.id?()=>supprimer(modal.init):null} onClose={()=>smodal(null)}/>}

@@ -519,7 +519,7 @@ create policy del_reminders  on reminders for delete using (is_staff());
 alter publication supabase_realtime add table reminders;
 
 -- ============================================================================
--- PLANNING DES RENDEZ-VOUS : véhicules clients le mercredi, le jeudi et le vendredi,
+-- PLANNING DES RENDEZ-VOUS : véhicules clients du lundi au vendredi,
 -- 3 au maximum par jour (avertissement dans l'application, qui compte aussi
 -- les véhicules encore à l'atelier). Lecture : tous ; écriture : staff.
 -- ============================================================================
